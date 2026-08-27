@@ -4,7 +4,11 @@
   "status": "experimental",
   "compatibility": {
     "policy": "explicitly-pinned-developer-preview-version",
-    "breaking_changes_expected": true
+    "breaking_changes_expected": true,
+    "target_release": "v0.1.1-rc.1",
+    "python_package": "deepseek-harness-sdk==0.1.1rc1",
+    "sdk_call_contract": "DeepSeekHarness.run(input, session_id=...)",
+    "readonly_cordis_sha256": "8c1187e946b3308e94cc255997353b63c84346091239e62e3957696efdc5367a"
   },
   "maps": {
     "agent_profile": "agent-provider-and-preset",
@@ -12,16 +16,24 @@
     "registry_skills": "skill-plugins",
     "loop_spec": "loop-and-scheduler-plugins",
     "trajectory": "append-only-session-events",
-    "human_gate": "approval-provider"
+    "human_gate": "unsupported-in-readonly-mvp"
   },
   "required_capabilities": [
     "append_only_events",
-    "human_gate",
     "sandbox_network_allowlist"
   ],
   "conditional_capabilities": {
-    "durable_sessions": "required-when-loop-present",
-    "scheduled_loops": "required-when-loop-present"
+    "human_gate": "unsupported-and-rejected",
+    "scheduled_loops": "unsupported-and-rejected"
   },
-  "unsupported_behavior": "fail-packaging-never-silently-drop"
+  "readonly_guards": [
+    "lockfile-tool-only",
+    "side-effects-read-or-none",
+    "approval-false",
+    "idempotent-true",
+    "agent-external-write-deny",
+    "no-model-facing-tools",
+    "model-facts-equal-trusted-tool-facts"
+  ],
+  "unsupported_behavior": "fail-before-execution-never-silently-drop"
 }

@@ -13,6 +13,11 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from workflow_factory.business import generate_bpmn  # noqa: E402
 from workflow_factory.compiler import compile_package  # noqa: E402
+from workflow_factory.deepseek_harness import (  # noqa: E402
+    DeepSeekHarnessSettings,
+    DeepSeekReadonlyAdapter,
+    DeepSeekReadonlyRunner,
+)
 from workflow_factory.reference_runtime import ReferenceRuntime  # noqa: E402
 from workflow_factory.text_pipeline import build_from_business_text  # noqa: E402
 from workflow_factory.util import read_json  # noqa: E402
@@ -91,6 +96,22 @@ def main() -> int:
     runtime_replay.add_argument("run_id")
     runtime_replay.add_argument("--runtime-dir", type=Path, required=True)
 
+    run_command = subparsers.add_parser("run")
+    run_command.add_argument("package", type=Path)
+    run_command.add_argument("--adapter", choices=["deepseek"], required=True)
+    run_command.add_argument("--runtime-dir", type=Path, required=True)
+    run_command.add_argument("--run-id", default="run-deepseek-readonly")
+    run_command.add_argument("--facts", type=Path)
+    run_command.add_argument("--provider", default="deepseek-official")
+    run_command.add_argument("--model", default="deepseek-v4-flash")
+    run_command.add_argument("--max-tokens", type=int)
+    run_command.add_argument("--base-url")
+    run_command.add_argument(
+        "--cordis",
+        type=Path,
+        default=ROOT / "adapters/deepseek-harness/readonly.cordis.yml",
+    )
+
     args = parser.parse_args()
     try:
         if args.command == "verify-definition":
@@ -150,7 +171,32 @@ def main() -> int:
             print(json.dumps(report, ensure_ascii=False, indent=2))
             if report["result"] != "PASS":
                 return 1
-    except (OSError, ValueError, KeyError) as exc:
+        elif args.command == "run":
+            settings = DeepSeekHarnessSettings(
+                provider=args.provider,
+                model=args.model,
+                max_tokens=args.max_tokens,
+                cwd=args.runtime_dir / "harness-workspace",
+                session_root=args.runtime_dir / "harness-sessions",
+                cordis=args.cordis,
+                base_url=args.base_url,
+            )
+            adapter = DeepSeekReadonlyAdapter(settings=settings)
+            try:
+                report = DeepSeekReadonlyRunner(
+                    args.package,
+                    args.runtime_dir,
+                    adapter,
+                ).run(
+                    read_json(args.facts) if args.facts else {},
+                    run_id=args.run_id,
+                )
+            finally:
+                adapter.close()
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            if report["result"] != "PASS":
+                return 1
+    except (OSError, RuntimeError, ValueError, KeyError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     return 0

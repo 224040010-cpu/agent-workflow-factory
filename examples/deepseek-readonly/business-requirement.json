@@ -1,0 +1,40 @@
+{
+  "$schema": "../../schemas/business-requirement.schema.json",
+  "schema_version": "1.0.0",
+  "workflow_id": "deepseek-readonly-intent-review",
+  "version": "1.0.0",
+  "name": "DeepSeek 只读业务意图复核",
+  "intent": "使用已固定的只读工具解析业务描述，再由 DeepSeek Harness Agent 复核证据。",
+  "entry": "parse-intent",
+  "required_skills": [],
+  "participants": [
+    {
+      "id": "lane-reviewer",
+      "name": "业务意图复核 Agent",
+      "kind": "agent",
+      "agent_ref": "intent-review-agent"
+    }
+  ],
+  "steps": [
+    {
+      "id": "parse-intent",
+      "name": "解析并复核业务意图",
+      "kind": "service",
+      "participant": "lane-reviewer",
+      "tool_ref": "parse-business-intent",
+      "completion_evidence": ["facts.intent.parsed == true"],
+      "risk_level": "L1"
+    },
+    {
+      "id": "completed",
+      "name": "只读复核完成",
+      "kind": "end",
+      "participant": "lane-reviewer",
+      "completion_evidence": [],
+      "risk_level": "L0"
+    }
+  ],
+  "transitions": [
+    {"from": "parse-intent", "to": "completed"}
+  ]
+}

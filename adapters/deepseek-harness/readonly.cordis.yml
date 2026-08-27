@@ -1,0 +1,36 @@
+# DeepSeek Harness 只读 MVP 组合。
+# 模型不获得 Bash、编辑器、文件系统、Skill 或任何模型侧 Tool；
+# Registry Tool 由工作流工厂宿主在 lockfile 与只读闸门之后执行。
+- id: sdk-jsonrpc-server
+  name: '@deepseek-ai/dsh-sdk-jsonrpc-server'
+  config:
+    maxTokensAsSuccess: false
+
+- id: llm-deepseek
+  name: '@deepseek-ai/dsh-llm-deepseek'
+  config:
+    apiKeyEnv: DEEPSEEK_API_KEY
+    streamIdleTimeoutMs: 172800000
+    models:
+      - id: !!js process.env.DSH_MODEL ?? 'deepseek-v4-flash'
+        contextWindow: !!js Number(process.env.DSH_CONTEXT_WINDOW ?? 1000000)
+
+- id: agent-spine
+  name: '@deepseek-ai/dsh-agent-spine-demo'
+  config:
+    includeHarnessIdentity: false
+    includeRuntimeContext: false
+    persona: >-
+      你是只读工作流证据复核 Agent。不得发起工具调用，不得修改外部状态，
+      必须按照每次输入中的 JSON 输出约束作答。
+    workspaceContext: false
+    skills:
+      enabled: false
+    toolBash: false
+    toolJobs: false
+
+- id: sessions
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  config:
+    root: !!js process.env.DSH_SESSION_ROOT ?? './.dsh-sessions'
+    compression: none

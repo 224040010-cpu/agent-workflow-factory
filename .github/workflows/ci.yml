@@ -28,5 +28,7 @@ jobs:
         run: python scripts/run_text_example.py
       - name: Execute and replay reference runtime
         run: python scripts/run_runtime_example.py
+      - name: Execute DeepSeek read-only contract MVP
+        run: python scripts/run_deepseek_mvp.py
       - name: Unit tests
         run: python -m unittest discover -s tests -v

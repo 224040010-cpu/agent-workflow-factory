@@ -168,6 +168,7 @@ def compile_package(
     graph = build_graph(ir)
     profiles = build_agent_profiles(ir, resolved.tools)
     loop_spec = build_loop_spec(ir)
+    has_human_gate = any(node["kind"] == "human_gate" for node in ir["spec"]["nodes"])
     max_risk = max(
         [risk_number(asset["risk_level"]) for asset in resolved.skills + resolved.tools] + [0]
     )
@@ -181,7 +182,7 @@ def compile_package(
             "runtime_requirements": {
                 "durable_sessions": "required" if loop_spec else "optional",
                 "append_only_events": "required",
-                "human_gate": "required",
+                "human_gate": "required" if has_human_gate else "optional",
                 "scheduled_loops": "required" if loop_spec else "optional",
                 "sandbox_network_allowlist": "required",
             },
