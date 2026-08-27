@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow-factory.local/schemas/runtime-state.schema.json",
+  "title": "Reference Runtime State",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id", "workflow_id", "workflow_version", "catalog_digest", "status",
+    "current_node", "facts", "completed_nodes", "loop_rounds", "paused_from_status", "state_version"
+  ],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1},
+    "workflow_id": {"type": "string", "minLength": 1},
+    "workflow_version": {"type": "string", "minLength": 1},
+    "catalog_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "status": {
+      "enum": ["running", "waiting_action", "waiting_facts", "paused", "completed", "escalated", "cancelled"]
+    },
+    "current_node": {"type": "string", "minLength": 1},
+    "facts": {"type": "object"},
+    "completed_nodes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "loop_rounds": {"type": "integer", "minimum": 0},
+    "paused_from_status": {
+      "type": ["string", "null"],
+      "enum": ["running", "waiting_action", "waiting_facts", null]
+    },
+    "state_version": {"type": "integer", "minimum": 1}
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow-factory.local/schemas/trajectory-event.schema.json",
+  "title": "Append-only Runtime Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "seq", "timestamp", "type", "prev_hash", "payload", "event_hash"],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1},
+    "seq": {"type": "integer", "minimum": 1},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "type": {"type": "string", "minLength": 1},
+    "prev_hash": {"type": ["string", "null"]},
+    "payload": {"type": "object"},
+    "event_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

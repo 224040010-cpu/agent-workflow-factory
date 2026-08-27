@@ -20,4 +20,11 @@ agents/*.agent.json          when Agent tasks exist
 loops/*.loop.json            when persistent loops exist
 ```
 
+Runtime proof additionally produces:
+
+```text
+runtime/events/<run-id>.jsonl
+runtime/checkpoints/<run-id>.json
+```
+
 The lockfile is mandatory even when a workflow has no external tools because it also pins the Catalog and shared system-definition version.

@@ -24,5 +24,7 @@ jobs:
             --peer /tmp/canonical-system-definition.json
       - name: Compile and validate example
         run: python scripts/run_example.py
+      - name: Execute and replay reference runtime
+        run: python scripts/run_runtime_example.py
       - name: Unit tests
         run: python -m unittest discover -s tests -v

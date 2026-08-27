@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 from pathlib import Path
 import sys
 
@@ -12,6 +13,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from workflow_factory.business import generate_bpmn  # noqa: E402
 from workflow_factory.compiler import compile_package  # noqa: E402
+from workflow_factory.reference_runtime import ReferenceRuntime  # noqa: E402
 from workflow_factory.util import read_json  # noqa: E402
 from workflow_factory.validator import validate_package  # noqa: E402
 
@@ -47,6 +49,40 @@ def main() -> int:
     validate = subparsers.add_parser("validate")
     validate.add_argument("package", type=Path)
 
+    runtime_start = subparsers.add_parser("runtime-start")
+    runtime_start.add_argument("package", type=Path)
+    runtime_start.add_argument("--runtime-dir", type=Path, required=True)
+    runtime_start.add_argument("--run-id")
+    runtime_start.add_argument("--facts", type=Path)
+
+    runtime_route = subparsers.add_parser("runtime-route")
+    runtime_route.add_argument("package", type=Path)
+    runtime_route.add_argument("run_id")
+    runtime_route.add_argument("--runtime-dir", type=Path, required=True)
+
+    runtime_complete = subparsers.add_parser("runtime-complete")
+    runtime_complete.add_argument("package", type=Path)
+    runtime_complete.add_argument("run_id")
+    runtime_complete.add_argument("node_id")
+    runtime_complete.add_argument("--runtime-dir", type=Path, required=True)
+    runtime_complete.add_argument("--facts", type=Path, required=True)
+
+    runtime_pause = subparsers.add_parser("runtime-pause")
+    runtime_pause.add_argument("package", type=Path)
+    runtime_pause.add_argument("run_id")
+    runtime_pause.add_argument("--runtime-dir", type=Path, required=True)
+    runtime_pause.add_argument("--reason", required=True)
+
+    runtime_resume = subparsers.add_parser("runtime-resume")
+    runtime_resume.add_argument("package", type=Path)
+    runtime_resume.add_argument("run_id")
+    runtime_resume.add_argument("--runtime-dir", type=Path, required=True)
+
+    runtime_replay = subparsers.add_parser("runtime-replay")
+    runtime_replay.add_argument("package", type=Path)
+    runtime_replay.add_argument("run_id")
+    runtime_replay.add_argument("--runtime-dir", type=Path, required=True)
+
     args = parser.parse_args()
     try:
         if args.command == "verify-definition":
@@ -73,6 +109,30 @@ def main() -> int:
                     print(f"ERROR: {error}", file=sys.stderr)
                 return 1
             print(f"Package verified: {args.package}")
+        elif args.command == "runtime-start":
+            runtime = ReferenceRuntime(args.package, args.runtime_dir)
+            facts = read_json(args.facts) if args.facts else {}
+            state = runtime.start(facts, args.run_id)
+            print(json.dumps(state, ensure_ascii=False, indent=2))
+        elif args.command == "runtime-route":
+            runtime = ReferenceRuntime(args.package, args.runtime_dir)
+            print(json.dumps(runtime.route(args.run_id).as_dict(), ensure_ascii=False, indent=2))
+        elif args.command == "runtime-complete":
+            runtime = ReferenceRuntime(args.package, args.runtime_dir)
+            state = runtime.complete(args.run_id, args.node_id, read_json(args.facts))
+            print(json.dumps(state, ensure_ascii=False, indent=2))
+        elif args.command == "runtime-pause":
+            runtime = ReferenceRuntime(args.package, args.runtime_dir)
+            print(json.dumps(runtime.pause(args.run_id, args.reason), ensure_ascii=False, indent=2))
+        elif args.command == "runtime-resume":
+            runtime = ReferenceRuntime(args.package, args.runtime_dir)
+            print(json.dumps(runtime.resume(args.run_id), ensure_ascii=False, indent=2))
+        elif args.command == "runtime-replay":
+            runtime = ReferenceRuntime(args.package, args.runtime_dir)
+            report = runtime.replay(args.run_id)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            if report["result"] != "PASS":
+                return 1
     except (OSError, ValueError, KeyError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

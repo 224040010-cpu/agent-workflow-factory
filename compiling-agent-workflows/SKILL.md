@@ -16,6 +16,7 @@ Create a reproducible package from a business definition or BPMN source while pr
 5. Write `registry.lock.json` with the Catalog digest and every resolved asset version and digest.
 6. Generate Graph, Agent Profile, LoopSpec and Policy artifacts.
 7. Validate reachability, terminal paths, explicit Agent responsibility, completion evidence, finite loops and approval policy.
+8. When execution proof is required, run the Reference Runtime, checkpoint each transition and replay the append-only trajectory.
 
 ## Constraints
 
@@ -25,5 +26,7 @@ Create a reproducible package from a business definition or BPMN source while pr
 - Do not resolve assets again during node execution.
 - Do not allow a persistent Loop without a checker, finite budget, stop condition and escalation path.
 - Do not let an Adapter drop a required runtime capability or weaken risk policy.
+- Treat completion facts as verified Adapter output or human-gate evidence; never accept untrusted model prose as facts.
 
 For artifact fields and ownership boundaries, read [`references/contracts.md`](references/contracts.md).
+For pause, resume, loop-budget and replay behavior, read [`references/runtime.md`](references/runtime.md).

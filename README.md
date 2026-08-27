@@ -28,8 +28,10 @@ The two repositories carry byte-identical copies of [`contracts/system-definitio
 - LoopSpec generation with checker, finite budget, stop and escalation contracts.
 - Package validation and tests.
 - Provider-neutral Runtime Adapter contract.
+- Executable Reference Runtime with evidence-gated routing and bounded loops.
+- Durable pause/resume checkpoints and hash-chained trajectory replay.
 
-Not yet implemented: model-backed free-form language interpretation, production scheduler/session store, DeepSeek Harness API binding, compensation transactions and a UI.
+Not yet implemented: model-backed free-form language interpretation, production scheduler/session store, DeepSeek Harness API binding, signed event storage, compensation transactions and a UI.
 
 ## Quick review
 
@@ -56,6 +58,7 @@ Or run the full example:
 
 ```bash
 python scripts/run_example.py
+python scripts/run_runtime_example.py
 python -m unittest discover -s tests -v
 ```
 
@@ -77,4 +80,4 @@ Not owned here:
 - Registry status mutation;
 - runtime discovery from a moving Git branch.
 
-See [`docs/architecture.md`](docs/architecture.md) and the shared system definition for review details.
+See [`docs/architecture.md`](docs/architecture.md), [`docs/reference-runtime.md`](docs/reference-runtime.md) and the shared system definition for review details.
