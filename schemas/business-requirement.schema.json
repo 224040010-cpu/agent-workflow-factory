@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow-factory.local/schemas/business-requirement.schema.json",
+  "title": "Structured Business Workflow Requirement",
+  "type": "object",
+  "required": ["schema_version", "workflow_id", "version", "name", "intent", "entry", "participants", "steps", "transitions"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "workflow_id": { "type": "string", "pattern": "^[a-z][a-z0-9-]+$" },
+    "version": { "type": "string" },
+    "name": { "type": "string", "minLength": 1 },
+    "intent": { "type": "string", "minLength": 1 },
+    "entry": { "type": "string" },
+    "required_skills": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "participants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "kind"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "kind": { "enum": ["agent", "human", "system", "external"] },
+          "agent_ref": { "type": "string" }
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "kind", "participant"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "kind": {
+            "enum": ["service", "agent", "human", "rule", "script", "manual", "exclusive_gateway", "parallel_gateway", "end"]
+          },
+          "participant": { "type": "string" },
+          "tool_ref": { "type": "string" },
+          "agent_ref": { "type": "string" },
+          "completion_evidence": { "type": "array", "items": { "type": "string" } },
+          "risk_level": { "enum": ["L0", "L1", "L2", "L3", "L4"] }
+        }
+      }
+    },
+    "transitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from", "to"],
+        "properties": {
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "condition": { "type": "string" },
+          "default": { "type": "boolean" }
+        }
+      }
+    },
+    "loop": {
+      "type": "object",
+      "required": ["intent", "trigger", "checker_ref", "max_rounds", "max_tokens_total", "stop_conditions", "escalation"],
+      "properties": {
+        "intent": { "type": "string" },
+        "trigger": { "type": "object" },
+        "checker_ref": { "type": "string" },
+        "max_rounds": { "type": "integer", "minimum": 1 },
+        "max_tokens_total": { "type": "integer", "minimum": 1 },
+        "stop_conditions": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "escalation": { "type": "string" }
+      }
+    }
+  }
+}

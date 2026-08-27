@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow-factory.local/schemas/agent-profile.schema.json",
+  "title": "Agent Profile",
+  "type": "object",
+  "required": ["api_version", "kind", "metadata", "spec"],
+  "properties": {
+    "api_version": { "const": "agent.skill-registry/v1alpha1" },
+    "kind": { "const": "AgentProfile" },
+    "metadata": { "type": "object", "required": ["id", "version"] },
+    "spec": {
+      "type": "object",
+      "required": ["purpose", "skills", "tools", "permissions", "budgets", "output_policy"],
+      "properties": {
+        "skills": { "type": "array", "items": { "type": "string" } },
+        "tools": { "type": "array", "items": { "type": "string" } },
+        "permissions": {
+          "type": "object",
+          "required": ["external_write", "requires_human_approval"]
+        },
+        "budgets": {
+          "type": "object",
+          "required": ["max_turns", "max_tokens", "max_tool_calls"]
+        }
+      }
+    }
+  }
+}

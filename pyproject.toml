@@ -1,0 +1,13 @@
+[project]
+name = "agent-workflow-factory"
+version = "0.3.0"
+description = "Compile governed business workflows into Agent Graph packages"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.unittest]
+start-directory = "tests"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

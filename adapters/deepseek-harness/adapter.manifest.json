@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0.0",
+  "adapter_id": "deepseek-harness",
+  "status": "experimental",
+  "compatibility": {
+    "policy": "explicitly-pinned-developer-preview-version",
+    "breaking_changes_expected": true
+  },
+  "maps": {
+    "agent_profile": "agent-provider-and-preset",
+    "registry_tools": "tool-plugins",
+    "registry_skills": "skill-plugins",
+    "loop_spec": "loop-and-scheduler-plugins",
+    "trajectory": "append-only-session-events",
+    "human_gate": "approval-provider"
+  },
+  "required_capabilities": [
+    "append_only_events",
+    "human_gate",
+    "sandbox_network_allowlist"
+  ],
+  "conditional_capabilities": {
+    "durable_sessions": "required-when-loop-present",
+    "scheduled_loops": "required-when-loop-present"
+  },
+  "unsupported_behavior": "fail-packaging-never-silently-drop"
+}

@@ -1,0 +1,133 @@
+{
+  "$schema": "../../schemas/business-requirement.schema.json",
+  "schema_version": "1.0.0",
+  "workflow_id": "governed-agent-workflow-build",
+  "version": "1.0.0",
+  "name": "Governed Agent Workflow Build",
+  "intent": "Turn an approved business process into a validated Agent Graph package with pinned capabilities and human review for unresolved findings.",
+  "entry": "parse-requirement",
+  "required_skills": [
+    "converting-business-to-bpmn",
+    "validating-bpmn-compliance"
+  ],
+  "participants": [
+    {
+      "id": "lane-planner",
+      "name": "Workflow Planner",
+      "kind": "agent",
+      "agent_ref": "workflow-planner-agent"
+    },
+    {
+      "id": "lane-compiler",
+      "name": "Graph Compiler",
+      "kind": "agent",
+      "agent_ref": "graph-compiler-agent"
+    },
+    {
+      "id": "lane-reviewer",
+      "name": "Independent Reviewer",
+      "kind": "agent",
+      "agent_ref": "workflow-evidence-review-agent"
+    },
+    {
+      "id": "lane-human",
+      "name": "Human Approver",
+      "kind": "human"
+    }
+  ],
+  "steps": [
+    {
+      "id": "parse-requirement",
+      "name": "Parse business intent",
+      "kind": "service",
+      "participant": "lane-planner",
+      "tool_ref": "parse-business-intent",
+      "completion_evidence": ["facts.intent.parsed == true"],
+      "risk_level": "L1"
+    },
+    {
+      "id": "assemble-model",
+      "name": "Assemble BPMN semantic model",
+      "kind": "service",
+      "participant": "lane-compiler",
+      "tool_ref": "assemble-bpmn-model",
+      "completion_evidence": ["facts.bpmn.model_exists == true"],
+      "risk_level": "L1"
+    },
+    {
+      "id": "compile-graph",
+      "name": "Compile Workflow IR and Agent Graph",
+      "kind": "agent",
+      "participant": "lane-compiler",
+      "completion_evidence": [
+        "facts.package.workflow_ir_exists == true",
+        "facts.package.registry_lock_exists == true"
+      ],
+      "risk_level": "L2"
+    },
+    {
+      "id": "validate-bpmn",
+      "name": "Validate BPMN and graph evidence",
+      "kind": "service",
+      "participant": "lane-reviewer",
+      "tool_ref": "validate-bpmn-structural",
+      "completion_evidence": ["facts.review.completed == true"],
+      "risk_level": "L1"
+    },
+    {
+      "id": "review-result",
+      "name": "Validation passed?",
+      "kind": "exclusive_gateway",
+      "participant": "lane-reviewer",
+      "completion_evidence": [],
+      "risk_level": "L0"
+    },
+    {
+      "id": "human-review",
+      "name": "Review unresolved workflow findings",
+      "kind": "human",
+      "participant": "lane-human",
+      "completion_evidence": ["facts.approval.decision_recorded == true"],
+      "risk_level": "L2"
+    },
+    {
+      "id": "completed",
+      "name": "Workflow package approved",
+      "kind": "end",
+      "participant": "lane-human",
+      "completion_evidence": [],
+      "risk_level": "L0"
+    }
+  ],
+  "transitions": [
+    {"from": "parse-requirement", "to": "assemble-model"},
+    {"from": "assemble-model", "to": "compile-graph"},
+    {"from": "compile-graph", "to": "validate-bpmn"},
+    {"from": "validate-bpmn", "to": "review-result"},
+    {
+      "from": "review-result",
+      "to": "completed",
+      "condition": "facts.review.passed == true"
+    },
+    {
+      "from": "review-result",
+      "to": "human-review",
+      "condition": "facts.review.passed == false",
+      "default": true
+    },
+    {"from": "human-review", "to": "assemble-model"}
+  ],
+  "loop": {
+    "intent": "Iterate a rejected workflow package until evidence passes or the bounded review budget is exhausted.",
+    "trigger": {"mode": "on_demand"},
+    "checker_ref": "workflow-evidence-review-agent",
+    "max_rounds": 3,
+    "max_tokens_total": 180000,
+    "stop_conditions": [
+      "facts.review.passed == true",
+      "facts.approval.rejected == true",
+      "facts.loop.budget_exhausted == true"
+    ],
+    "escalation": "human-workflow-owner"
+  }
+}

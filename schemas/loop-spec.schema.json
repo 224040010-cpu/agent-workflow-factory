@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow-factory.local/schemas/loop-spec.schema.json",
+  "title": "Persistent Loop Specification",
+  "type": "object",
+  "required": ["api_version", "kind", "metadata", "spec"],
+  "properties": {
+    "api_version": { "const": "loop.skill-registry/v1alpha1" },
+    "kind": { "const": "Loop" },
+    "metadata": { "type": "object", "required": ["id", "version"] },
+    "spec": {
+      "type": "object",
+      "required": ["intent", "trigger", "graph_ref", "checker_ref", "budgets", "stop_conditions", "escalation"],
+      "properties": {
+        "budgets": {
+          "type": "object",
+          "required": ["max_rounds", "max_tokens_total"]
+        },
+        "stop_conditions": { "type": "array", "minItems": 1 },
+        "escalation": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

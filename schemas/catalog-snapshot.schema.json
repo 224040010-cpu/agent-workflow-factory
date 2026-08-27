@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow-factory.local/schemas/catalog-snapshot.schema.json",
+  "title": "Capability Catalog Snapshot",
+  "type": "object",
+  "required": ["schema_version", "generated_at", "source", "skills", "tools"],
+  "properties": {
+    "schema_version": { "const": "2.0.0" },
+    "source": {
+      "type": "object",
+      "required": ["system_definition_version", "system_definition_digest"]
+    },
+    "skills": { "type": "array" },
+    "tools": { "type": "array" }
+  }
+}

@@ -1,0 +1,28 @@
+name: Workflow Factory CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify shared system definition
+        run: python scripts/verify_system_definition.py
+      - name: Compare canonical Registry definition
+        run: |
+          curl --fail --silent --show-error \
+            https://raw.githubusercontent.com/224040010-cpu/skill-registory/master/contracts/system-definition.json \
+            --output /tmp/canonical-system-definition.json
+          python scripts/verify_system_definition.py \
+            --peer /tmp/canonical-system-definition.json
+      - name: Compile and validate example
+        run: python scripts/run_example.py
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v

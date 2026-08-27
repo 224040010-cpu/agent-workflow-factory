@@ -1,0 +1,184 @@
+{
+  "$schema": "./system-definition.schema.json",
+  "schema_version": "1.0.0",
+  "definition_version": "3.0.0",
+  "contract_id": "skill-registry-agent-workflow-system",
+  "status": "review",
+  "canonical_repository": "skill-registory",
+  "mirrors": [
+    "skill-registory/contracts/system-definition.json",
+    "agent-workflow-factory/contracts/system-definition.json"
+  ],
+  "purpose": "Define one governed system spanning capability registration and business-to-agent workflow execution without coupling the repositories at runtime.",
+  "repositories": {
+    "skill-registory": {
+      "role": "capability-control-plane",
+      "owns": [
+        "skill-and-tool-source-specifications",
+        "capability-lifecycle",
+        "authoring-and-admission-gates",
+        "risk-and-governance-policy",
+        "versioned-catalog-publication"
+      ],
+      "must_not_own": [
+        "workflow-execution",
+        "agent-session-lifecycle",
+        "graph-routing",
+        "loop-scheduling",
+        "harness-specific-deployment"
+      ]
+    },
+    "agent-workflow-factory": {
+      "role": "workflow-compiler-and-runtime-plane",
+      "owns": [
+        "business-language-contract",
+        "bpmn-generation-and-parsing",
+        "workflow-ir",
+        "graph-routing-contracts",
+        "loop-specifications",
+        "agent-profile-compilation",
+        "runtime-adapters",
+        "trajectory-replay-and-evaluation"
+      ],
+      "must_not_own": [
+        "canonical-skill-or-tool-lifecycle",
+        "duplicate-capability-definitions",
+        "registry-status-mutations",
+        "unversioned-runtime-asset-discovery"
+      ]
+    }
+  },
+  "asset_types": {
+    "skill": {
+      "authority": "skill-registory",
+      "runtime_use": "resolved-and-pinned"
+    },
+    "tool": {
+      "authority": "skill-registory",
+      "runtime_use": "resolved-and-pinned"
+    },
+    "workflow": {
+      "authority": "agent-workflow-factory",
+      "runtime_use": "compiled-package"
+    },
+    "agent_profile": {
+      "authority": "agent-workflow-factory",
+      "runtime_use": "compiled-package"
+    },
+    "loop_spec": {
+      "authority": "agent-workflow-factory",
+      "runtime_use": "compiled-package"
+    },
+    "runtime_policy": {
+      "authority": "agent-workflow-factory",
+      "governance_source": "skill-registory",
+      "runtime_use": "compiled-package"
+    }
+  },
+  "primary_pipeline": [
+    {
+      "id": "P0",
+      "name": "business-language",
+      "owner": "agent-workflow-factory",
+      "output": "business-requirement.json"
+    },
+    {
+      "id": "P1",
+      "name": "bpmn",
+      "owner": "agent-workflow-factory",
+      "output": "process.bpmn"
+    },
+    {
+      "id": "P2",
+      "name": "workflow-ir",
+      "owner": "agent-workflow-factory",
+      "output": "workflow.ir.json"
+    },
+    {
+      "id": "P3",
+      "name": "agent-graph",
+      "owner": "agent-workflow-factory",
+      "output": "graph.json"
+    },
+    {
+      "id": "P4",
+      "name": "agent-loop-policy-compilation",
+      "owner": "agent-workflow-factory",
+      "output": "runtime-package"
+    },
+    {
+      "id": "P5",
+      "name": "harness-deployment",
+      "owner": "agent-workflow-factory",
+      "output": "deployment-and-trajectory"
+    },
+    {
+      "id": "P6",
+      "name": "governance-feedback",
+      "owner": "skill-registory",
+      "output": "asset-governance-evidence"
+    }
+  ],
+  "cross_repository_contracts": {
+    "catalog_snapshot": {
+      "publisher": "skill-registory",
+      "consumer": "agent-workflow-factory",
+      "schema_version": "2.0.0",
+      "artifact": "catalog/catalog.snapshot.json",
+      "eligible_statuses": [
+        "approved",
+        "restricted"
+      ],
+      "required_asset_fields": [
+        "name",
+        "version",
+        "status",
+        "risk_level",
+        "digest"
+      ]
+    },
+    "registry_lock": {
+      "producer": "agent-workflow-factory",
+      "artifact": "registry.lock.json",
+      "required_fields": [
+        "catalog_digest",
+        "system_definition_version",
+        "resolved_assets"
+      ],
+      "rule": "A deployed run uses pinned asset versions and digests; it never resolves the registry main branch during node execution."
+    },
+    "governance_feedback": {
+      "producer": "agent-workflow-factory",
+      "consumer": "skill-registory",
+      "artifact": "governance-feedback.json",
+      "allowed_data": [
+        "usage-counts",
+        "success-rates",
+        "latency",
+        "cost",
+        "policy-violations",
+        "deprecation-evidence"
+      ],
+      "rule": "Runtime evidence may recommend lifecycle changes but cannot mutate registry status directly."
+    }
+  },
+  "execution_invariants": [
+    "Only catalog assets with approved or restricted status may be compiled into a runtime package.",
+    "Every resolved skill and tool is pinned by version and digest before deployment.",
+    "BPMN is a design source; Workflow IR is the stable executable contract.",
+    "Graph progress is selected from trusted facts and completion evidence, not conversational memory.",
+    "Every persistent loop has an intent, checker, finite budget, stop condition and escalation path.",
+    "BPMN lanes are responsibility hints and never map mechanically one-to-one to agents.",
+    "Harness adapters may translate contracts but may not weaken policy or silently drop required capabilities.",
+    "All runs emit append-only trajectory events sufficient for audit, resume and replay."
+  ],
+  "synchronization": {
+    "mode": "canonical-publish-and-mirror",
+    "canonical_path": "skill-registory/contracts/system-definition.json",
+    "mirror_path": "agent-workflow-factory/contracts/system-definition.json",
+    "checksum_algorithm": "sha256",
+    "checksum_file": "contracts/system-definition.sha256",
+    "change_policy": "Change the canonical definition, bump definition_version, synchronize the mirror, then require both repository checks to pass before release.",
+    "split_brain_policy": "Fail CI and block catalog publication or workflow packaging when version, bytes or checksum differ."
+  }
+}

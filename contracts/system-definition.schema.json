@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skill-registory.local/schemas/system-definition.schema.json",
+  "title": "Shared Skill Registry and Agent Workflow System Definition",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "definition_version",
+    "contract_id",
+    "canonical_repository",
+    "repositories",
+    "asset_types",
+    "primary_pipeline",
+    "cross_repository_contracts",
+    "execution_invariants",
+    "synchronization"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "definition_version": { "type": "string" },
+    "contract_id": { "const": "skill-registry-agent-workflow-system" },
+    "canonical_repository": { "const": "skill-registory" },
+    "repositories": {
+      "type": "object",
+      "required": ["skill-registory", "agent-workflow-factory"]
+    },
+    "asset_types": { "type": "object", "minProperties": 6 },
+    "primary_pipeline": { "type": "array", "minItems": 7 },
+    "cross_repository_contracts": {
+      "type": "object",
+      "required": ["catalog_snapshot", "registry_lock", "governance_feedback"]
+    },
+    "execution_invariants": { "type": "array", "minItems": 1 },
+    "synchronization": {
+      "type": "object",
+      "required": ["mode", "checksum_algorithm", "checksum_file", "change_policy", "split_brain_policy"]
+    }
+  },
+  "additionalProperties": true
+}
