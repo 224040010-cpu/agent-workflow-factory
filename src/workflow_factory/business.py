@@ -5,6 +5,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from .util import read_json
+from .diagram import append_bpmn_di
 
 
 BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL"
@@ -146,7 +147,7 @@ def render_bpmn(data: dict) -> bytes:
             if step["participant"] == participant["id"]:
                 ET.SubElement(lane, qname(BPMN_NS, "flowNodeRef")).text = step["id"]
 
-    ET.SubElement(process, qname(BPMN_NS, "startEvent"), {"id": "start", "name": "Start"})
+    ET.SubElement(process, qname(BPMN_NS, "startEvent"), {"id": "start", "name": "开始"})
     step_elements: dict[str, ET.Element] = {}
     for step in data["steps"]:
         participant = participants[step["participant"]]
@@ -169,6 +170,7 @@ def render_bpmn(data: dict) -> bytes:
         )
 
     flows = [{"from": "start", "to": data["entry"]}, *data["transitions"]]
+    diagram_edges = []
     for index, transition in enumerate(flows, start=1):
         flow_id = f"Flow_{index:03d}"
         attrs = {
@@ -182,6 +184,28 @@ def render_bpmn(data: dict) -> bytes:
             condition.text = transition["condition"]
         if transition.get("default") and transition["from"] in step_elements:
             step_elements[transition["from"]].set("default", flow_id)
+
+        diagram_edges.append(
+            {"id": flow_id, "from": transition["from"], "to": transition["to"]}
+        )
+
+    diagram_nodes = [
+        {
+            "id": "start",
+            "name": "开始",
+            "kind": "start",
+            "participant": data["participants"][0]["id"],
+        },
+        *data["steps"],
+    ]
+    append_bpmn_di(
+        definitions,
+        data["workflow_id"],
+        data["participants"],
+        diagram_nodes,
+        diagram_edges,
+        "start",
+    )
 
     ET.indent(definitions, space="  ")
     return ET.tostring(definitions, encoding="utf-8", xml_declaration=True)

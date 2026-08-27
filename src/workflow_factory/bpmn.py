@@ -125,6 +125,7 @@ def parse_bpmn(path: Path) -> dict:
         "kind": "Workflow",
         "metadata": {
             "id": process.get("id"),
+            "display_name": process.get("name", process.get("id", "")),
             "version": process.get(qname(WF_NS, "version"), "0.0.0"),
             "source": {"type": "bpmn", "path": str(path.as_posix())},
             "source_digest": sha256_file(path),

@@ -3,7 +3,8 @@
 将受治理的业务工作流编译为可部署的 Agent 软件包。
 
 ```text
-业务需求
+业务人员自然语言描述
+  → 结构化业务需求 + 解释报告
   → BPMN 2.0
   → 工作流 IR
   → 基于事实路由的 Agent Graph
@@ -19,6 +20,7 @@
 ## v3 已实现的纵向能力
 
 - 结构化业务语言契约。
+- 将受控中文业务描述解释为结构化需求，并保留置信度、警告和假设。
 - 将业务定义确定性地生成 BPMN 2.0。
 - 解析包含泳道、任务、网关、顺序条件和循环注解的 BPMN 子集。
 - 生成工作流 IR 和基于事实路由的 Graph。
@@ -30,8 +32,9 @@
 - 与模型提供方无关的 Runtime Adapter 契约。
 - 支持证据门控路由和有限循环的可执行参考运行时。
 - 持久化暂停/恢复检查点，以及基于哈希链的轨迹重放。
+- 为业务人员返回含 BPMN DI 的 `.bpmn` 文件、整体流程 SVG 和统一交付清单。
 
-尚未实现：由模型驱动的自由文本业务语言解析、生产级调度器与会话存储、DeepSeek Harness API 绑定、带签名的事件存储、补偿事务和可视化界面。
+尚未实现：理解任意自由文本的模型解释器、生产级调度器与会话存储、DeepSeek Harness API 绑定、带签名的事件存储、补偿事务和交互式可视化界面。
 
 ## 快速评审
 
@@ -39,6 +42,11 @@
 
 ```bash
 python scripts/workflowctl.py verify-definition
+
+python scripts/workflowctl.py build-from-text \
+  examples/expense-reimbursement/business-description.txt \
+  --workflow-id expense-reimbursement \
+  --output build/expense-reimbursement
 
 python scripts/workflowctl.py generate-bpmn \
   examples/financial-event-monitor/business-requirement.json \
@@ -58,6 +66,7 @@ python scripts/workflowctl.py validate \
 
 ```bash
 python scripts/run_example.py
+python scripts/run_text_example.py
 python scripts/run_runtime_example.py
 python -m unittest discover -s tests -v
 ```
@@ -80,4 +89,4 @@ python -m unittest discover -s tests -v
 - Registry 状态变更；
 - 运行期间从持续变化的 Git 分支动态发现能力。
 
-评审细节参见 [`docs/architecture.md`](docs/architecture.md)、[`docs/reference-runtime.md`](docs/reference-runtime.md) 和双仓共享的总定义。
+自然语言输入格式和返回文件参见 [`docs/business-text-to-diagram.md`](docs/business-text-to-diagram.md)。架构和运行时评审细节参见 [`docs/architecture.md`](docs/architecture.md)、[`docs/reference-runtime.md`](docs/reference-runtime.md) 和双仓共享的总定义。

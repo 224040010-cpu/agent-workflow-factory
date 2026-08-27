@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow-factory.local/schemas/business-view.schema.json",
+  "title": "业务流程图返回清单",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "workflow_id", "name", "intent", "status", "business_review", "statistics", "deliverables"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "workflow_id": {"type": "string", "minLength": 1},
+    "name": {"type": "string", "minLength": 1},
+    "intent": {"type": "string", "minLength": 1},
+    "status": {"enum": ["REVIEW_REQUIRED", "READY"]},
+    "business_review": {"type": "object"},
+    "statistics": {"type": "object"},
+    "deliverables": {
+      "type": "array",
+      "minItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["type", "media_type", "path", "digest", "description"],
+        "properties": {
+          "type": {"type": "string"},
+          "media_type": {"type": "string"},
+          "path": {"type": "string"},
+          "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "description": {"type": "string"}
+        }
+      }
+    }
+  }
+}

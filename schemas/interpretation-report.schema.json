@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow-factory.local/schemas/interpretation-report.schema.json",
+  "title": "自然语言业务解释报告",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "interpreter", "source_digest", "workflow_id", "confidence", "review_required", "warnings", "assumptions", "recognized"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "interpreter": {"type": "string", "minLength": 1},
+    "source_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "workflow_id": {"type": "string", "minLength": 1},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "review_required": {"type": "boolean"},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "assumptions": {"type": "array", "items": {"type": "string"}},
+    "recognized": {
+      "type": "object",
+      "required": ["participants", "actions", "decisions"],
+      "properties": {
+        "participants": {"type": "integer", "minimum": 1},
+        "actions": {"type": "integer", "minimum": 1},
+        "decisions": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from workflow_factory.business import generate_bpmn  # noqa: E402
 from workflow_factory.compiler import compile_package  # noqa: E402
 from workflow_factory.reference_runtime import ReferenceRuntime  # noqa: E402
+from workflow_factory.text_pipeline import build_from_business_text  # noqa: E402
 from workflow_factory.util import read_json  # noqa: E402
 from workflow_factory.validator import validate_package  # noqa: E402
 
@@ -38,6 +39,13 @@ def main() -> int:
     generate = subparsers.add_parser("generate-bpmn")
     generate.add_argument("business", type=Path)
     generate.add_argument("--output", type=Path, required=True)
+
+    text_build = subparsers.add_parser("build-from-text")
+    text_build.add_argument("source", type=Path)
+    text_build.add_argument("--workflow-id")
+    text_build.add_argument("--catalog", type=Path, default=ROOT / "fixtures/catalog.snapshot.json")
+    text_build.add_argument("--definition", type=Path, default=ROOT / "contracts/system-definition.json")
+    text_build.add_argument("--output", type=Path, required=True)
 
     compile_command = subparsers.add_parser("compile")
     compile_command.add_argument("bpmn", type=Path)
@@ -90,6 +98,15 @@ def main() -> int:
         elif args.command == "generate-bpmn":
             generate_bpmn(args.business, args.output)
             print(f"BPMN → {args.output}")
+        elif args.command == "build-from-text":
+            manifest = build_from_business_text(
+                args.source,
+                args.catalog,
+                args.definition,
+                args.output,
+                workflow_id=args.workflow_id,
+            )
+            print(json.dumps(manifest, ensure_ascii=False, indent=2))
         elif args.command == "compile":
             report = compile_package(
                 args.bpmn,

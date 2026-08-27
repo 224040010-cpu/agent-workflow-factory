@@ -27,4 +27,15 @@ runtime/events/<run-id>.jsonl
 runtime/checkpoints/<run-id>.json
 ```
 
+自然语言到业务流程图的综合构建还会产生：
+
+```text
+business-requirement.json
+interpretation-report.json
+process.bpmn
+workflow-overview.svg
+business-view.json
+package/graph.json
+```
+
 即使工作流不使用外部 Tool，也必须生成锁文件，因为锁文件还会固定能力目录和共享总定义版本。
