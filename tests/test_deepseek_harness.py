@@ -57,6 +57,33 @@ class FakeHarnessClient:
         self.closed = True
 
 
+class ErrorHarnessClient:
+    def run(self, input: str, *, session_id: str | None = None):
+        del input
+        return SimpleNamespace(
+            session_id=session_id,
+            final_response="",
+            finish_reason="error",
+            events=[
+                {
+                    "type": "turn/end",
+                    "data": {
+                        "reason": {
+                            "kind": "error",
+                            "error": {
+                                "code": "AUTHENTICATION_FAILED",
+                                "message": "invalid API key sk-super-secret-value",
+                            },
+                        }
+                    },
+                }
+            ],
+        )
+
+    def close(self) -> None:
+        return None
+
+
 class DeepSeekReadonlyHarnessTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -136,6 +163,16 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
                 self.runtime_dir,
                 DeepSeekReadonlyAdapter(client=client),
             ).run(self.facts, run_id="run-untrusted-facts")
+
+    def test_surfaces_structured_harness_error_and_redacts_api_key(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "AUTHENTICATION_FAILED") as caught:
+            DeepSeekReadonlyRunner(
+                self.package,
+                self.runtime_dir,
+                DeepSeekReadonlyAdapter(client=ErrorHarnessClient()),
+            ).run(self.facts, run_id="run-provider-error")
+        self.assertNotIn("sk-super-secret-value", str(caught.exception))
+        self.assertIn("[REDACTED_API_KEY]", str(caught.exception))
 
     def test_capability_negotiation_rejects_human_and_scheduled_loop(self) -> None:
         package = self.root / "governed-package"

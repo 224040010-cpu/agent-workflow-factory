@@ -7,6 +7,7 @@ from importlib.metadata import PackageNotFoundError, version
 import json
 from pathlib import Path
 import platform
+import re
 from typing import Any, Callable, Protocol
 
 from .reference_runtime import ReferenceRuntime, deep_merge, evaluate_expression, fact_value
@@ -19,6 +20,7 @@ PINNED_SDK_VERSION = "0.1.1rc1"
 READONLY_CORDIS_DIGEST = (
     "8c1187e946b3308e94cc255997353b63c84346091239e62e3957696efdc5367a"
 )
+SECRET_PATTERN = re.compile(r"(?i)(?:bearer\s+)?sk-[A-Za-z0-9_-]{8,}")
 
 
 class HarnessClient(Protocol):
@@ -211,6 +213,22 @@ def _event_types(events: list[Any]) -> list[str]:
     return values
 
 
+def _harness_failure(events: list[Any], finish_reason: str | None) -> str:
+    reason: Any = None
+    for event in reversed(events):
+        if not isinstance(event, dict) or event.get("type") != "turn/end":
+            continue
+        data = event.get("data")
+        if isinstance(data, dict):
+            reason = data.get("reason")
+        break
+    detail = json.dumps(reason, ensure_ascii=False, sort_keys=True) if reason else "no detail"
+    detail = SECRET_PATTERN.sub("[REDACTED_API_KEY]", detail)
+    if len(detail) > 1200:
+        detail = detail[:1200] + "..."
+    return f"Harness turn ended with {finish_reason or 'unknown'}: {detail}"
+
+
 class DeepSeekReadonlyAdapter:
     CAPABILITIES = RuntimeCapabilities(
         durable_sessions=True,
@@ -301,6 +319,13 @@ class DeepSeekReadonlyAdapter:
         final_response = getattr(result, "final_response", None)
         if not isinstance(final_response, str):
             raise ValueError("Harness result has no final_response")
+        events = getattr(result, "events", [])
+        events = events if isinstance(events, list) else []
+        finish_reason = getattr(result, "finish_reason", None)
+        if finish_reason not in {None, "completed"}:
+            raise RuntimeError(_harness_failure(events, finish_reason))
+        if not final_response.strip():
+            raise RuntimeError(_harness_failure(events, finish_reason))
         envelope = _strict_model_envelope(final_response)
         if envelope["facts"] != observation.facts:
             raise ValueError("Model facts differ from trusted tool facts")
@@ -312,16 +337,15 @@ class DeepSeekReadonlyAdapter:
         ]
         if failed:
             raise ValueError(f"Trusted tool facts do not satisfy evidence: {', '.join(failed)}")
-        events = getattr(result, "events", [])
         return HarnessNodeResult(
             session_id=str(getattr(result, "session_id", session_id)),
-            finish_reason=getattr(result, "finish_reason", None),
+            finish_reason=finish_reason,
             fact_updates=envelope["facts"],
             evidence=envelope["evidence"],
             response_digest=(
                 "sha256:" + hashlib.sha256(final_response.encode("utf-8")).hexdigest()
             ),
-            harness_event_types=_event_types(events if isinstance(events, list) else []),
+            harness_event_types=_event_types(events),
             tool_observation=observation,
         )
 
