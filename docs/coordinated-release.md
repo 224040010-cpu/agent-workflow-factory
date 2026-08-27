@@ -1,14 +1,14 @@
-# Coordinated release
+# 双仓协同发布
 
-The shared definition is one logical contract with a canonical Registry copy and a workflow-factory mirror. Use this order when it changes:
+共享总定义在逻辑上是一份契约：Registry 保存权威副本，工作流工厂保存镜像副本。总定义发生变化时，按以下顺序发布：
 
-1. Change `skill-registory/contracts/system-definition.json` and increment `definition_version`.
-2. Refresh its checksum and merge the Registry change.
-3. Synchronize the factory mirror with `scripts/sync_system_definition.py`.
-4. Refresh or ingest a Catalog snapshot produced from the same definition version.
-5. Merge the factory change after byte-for-byte canonical comparison passes.
-6. Recompile affected workflows and review lockfile diffs.
+1. 修改 `skill-registory/contracts/system-definition.json`，并递增 `definition_version`。
+2. 刷新校验和并合并 Registry 变更。
+3. 使用 `scripts/sync_system_definition.py` 同步工作流工厂中的镜像。
+4. 刷新或导入由相同总定义版本生成的能力目录快照。
+5. 字节级权威副本比较通过后，再合并工作流工厂变更。
+6. 重新编译受影响的工作流，并评审锁文件差异。
 
-Ordinary Skill/Tool additions do not require a system-definition change. They produce a new Catalog snapshot; each workflow chooses when to update its lockfile.
+普通 Skill 或 Tool 的新增不需要修改总定义。此类变更会生成新的能力目录快照，每个工作流可以自行决定何时更新锁文件。
 
-If either repository detects a definition mismatch, Catalog publication or workflow packaging is blocked. Runtime continues to use already-pinned packages and is not affected by Registry availability.
+任一仓库检测到总定义不一致时，都必须阻止能力目录发布或工作流打包。运行时继续使用已经固定版本的软件包，不受 Registry 可用性的影响。

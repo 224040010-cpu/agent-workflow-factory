@@ -1,14 +1,14 @@
-# Runtime proof checklist
+# 运行时证明检查清单
 
-Use the Reference Runtime when a review requires evidence beyond static compilation.
+当评审需要静态编译以外的执行证据时，使用参考运行时。
 
-1. Start a run against one immutable compiled package.
-2. Route until an action node is returned.
-3. Execute the pinned Tool or Agent through an Adapter.
-4. Convert verified Adapter output into structured fact updates.
-5. Complete the node and require all completion evidence to pass.
-6. Pause and resume at least once for durable-session workflows.
-7. Exercise a rejection path for workflows with a LoopSpec.
-8. Replay the trajectory and require `result: PASS`.
+1. 基于一份不可变的已编译软件包启动运行。
+2. 持续路由，直到返回一个动作节点。
+3. 通过 Adapter 执行已固定版本的 Tool 或 Agent。
+4. 将经过验证的 Adapter 输出转换为结构化事实更新。
+5. 完成节点，并要求所有完成证据均通过。
+6. 对需要持久会话的工作流至少执行一次暂停和恢复。
+7. 对含有 LoopSpec 的工作流执行一次拒绝路径。
+8. 重放执行轨迹，并要求结果为 `result: PASS`。
 
-Never turn free-form model output directly into trusted facts. Validate shape, provenance and policy first. A failed replay, missing checkpoint or exhausted loop budget is a hard review failure, not a warning.
+不得把模型自由文本直接转换为可信事实。应先验证数据结构、来源和策略。重放失败、检查点缺失或循环预算耗尽都属于必须阻止通过的评审失败，而不是普通警告。

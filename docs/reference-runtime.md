@@ -1,45 +1,45 @@
-# Reference Runtime
+# 参考运行时
 
-The Reference Runtime proves that a compiled package can drive a real, resumable execution. It is deliberately small and provider-neutral; production schedulers and model adapters can replace it while preserving the same state and event semantics.
+参考运行时用于证明编译后的软件包能够驱动真实且可恢复的执行。它有意保持小型化并与模型提供方解耦；生产级调度器和模型适配器可以替换它，同时保留相同的状态及事件语义。
 
-## Execution boundary
+## 执行边界
 
-The runtime loads only the compiled package. It never discovers a moving Registry branch during a run. `registry.lock.json` pins the Capability Catalog and assets before execution begins.
+运行时只加载已经编译的软件包，在运行期间不会从持续变化的 Registry 分支发现能力。执行开始前，`registry.lock.json` 已固定能力目录及所有资产版本。
 
-Routing expressions use a restricted fact language. Supported operands are booleans, null, numbers and quoted strings; supported comparisons are `==`, `!=`, `>`, `>=`, `<` and `<=`, joined by `and` or `or`. Arbitrary code execution is not supported.
+路由表达式使用受限的事实语言。操作数支持布尔值、`null`、数字和带引号的字符串；比较运算支持 `==`、`!=`、`>`、`>=`、`<` 和 `<=`，并可使用 `and` 或 `or` 连接。该语言不支持执行任意代码。
 
-An Adapter or human gate completes an action node by submitting structured fact updates. The runtime merges those facts, evaluates every `completion_evidence` expression and rejects the completion if any expression is false. Choice and terminal nodes are automatic and cannot be completed manually.
+Adapter 或人工关卡通过提交结构化事实更新来完成动作节点。运行时合并候选事实并计算每一条 `completion_evidence` 表达式；任何表达式为假时都将拒绝节点完成。选择节点和终止节点由运行时自动处理，不能手动完成。
 
-## Durable state
+## 持久状态
 
-Every mutation produces:
+每次状态变化都会产生：
 
-1. A domain event such as `node.completed` or `route.selected`.
-2. A `state.checkpointed` event containing the resulting state.
-3. A logical checkpoint at `runtime/checkpoints/<run-id>.json`.
+1. 一条领域事件，例如 `node.completed` 或 `route.selected`；
+2. 一条包含结果状态的 `state.checkpointed` 事件；
+3. 一个位于 `runtime/checkpoints/<run-id>.json` 的逻辑检查点。
 
-Events are appended to `runtime/events/<run-id>.jsonl`. Each event carries `seq`, `prev_hash` and `event_hash`, forming a SHA-256 hash chain. Replay verifies sequence, linkage, event hashes and equality between the latest recorded state and the checkpoint file.
+事件以追加方式写入 `runtime/events/<run-id>.jsonl`。每条事件都包含 `seq`、`prev_hash` 和 `event_hash`，共同形成 SHA-256 哈希链。重放会验证事件序号、前后链接、事件哈希，以及最后一份事件状态与检查点文件是否一致。
 
-This detects accidental or unauthorized mutation; it is not a substitute for signed events or an immutable production store.
+该机制可以发现意外修改或未授权篡改，但不能替代带签名的事件或生产级不可变存储。
 
-## State machine
+## 状态机
 
 ```text
-running → waiting_action → running → completed
-   │             │
-   ├─ paused ────┘ (resume restores the exact pre-pause status)
-   ├─ waiting_facts
-   └─ escalated (loop budget exhausted)
+运行中 → 等待动作 → 运行中 → 已完成
+  │          │
+  ├─ 已暂停 ─┘（恢复后回到暂停前的准确状态）
+  ├─ 等待事实
+  └─ 已升级（循环预算耗尽）
 ```
 
-When a route targets a previously completed node, one loop round is counted. Crossing `max_rounds` stops routing and emits `loop.budget_exhausted` with the configured escalation owner.
+当路由再次指向已经完成的节点时，运行时计为一轮循环。循环轮数超过 `max_rounds` 后停止路由，并生成 `loop.budget_exhausted` 事件，其中包含已配置的升级负责人。
 
-## Command example
+## 命令示例
 
-Compile the example first with `python scripts/run_example.py`, then run the complete executable demonstration with:
+首先使用 `python scripts/run_example.py` 编译示例，然后执行完整的运行时演示：
 
 ```bash
 python scripts/run_runtime_example.py
 ```
 
-For integration testing, use `runtime-start`, `runtime-route`, `runtime-complete`, `runtime-pause`, `runtime-resume` and `runtime-replay` from `scripts/workflowctl.py`. Fact updates are supplied as JSON files, keeping model prose outside the trusted routing boundary.
+集成测试可以使用 `scripts/workflowctl.py` 提供的 `runtime-start`、`runtime-route`、`runtime-complete`、`runtime-pause`、`runtime-resume` 和 `runtime-replay` 命令。事实更新通过 JSON 文件提交，确保自由文本模型输出不会直接进入可信路由边界。

@@ -1,39 +1,39 @@
-# Architecture
+# 架构说明
 
-## Stable boundary
+## 稳定边界
 
-BPMN is the business design source. Workflow IR is the stable executable contract. Graph, Agent Profile, LoopSpec and Policy manifests are derived artifacts. Harness Adapters translate those artifacts but cannot change their semantics or weaken policy.
+BPMN 是业务设计来源，工作流 IR 是稳定的可执行契约。Graph、Agent Profile、LoopSpec 和 Policy 清单都是派生产物。Harness Adapter 可以转换这些产物，但不能改变其语义或削弱策略。
 
-## Cross-repository flow
+## 跨仓流程
 
 ```text
 skill-registory
-  registry YAML + source specifications
-      → admission/governance
-      → immutable catalog.snapshot.json
+  Registry YAML + 源规范
+      → 准入与治理
+      → 不可变 catalog.snapshot.json
                               |
                               v
 agent-workflow-factory
-  business requirement → BPMN → IR → resolve catalog
-                                     → registry.lock.json
-                                     → graph + agents + loops + policy
-                                     → adapter package
+  业务需求 → BPMN → IR → 解析能力目录
+                         → registry.lock.json
+                         → graph + agents + loops + policy
+                         → 适配器软件包
 ```
 
-Resolution happens during compile/package. Runtime nodes never query Registry `main` and never float to a newer asset version.
+能力解析发生在编译和打包阶段。运行时节点不会查询 Registry 的 `main` 分支，也不会自动漂移到更新的资产版本。
 
-## Trusted facts
+## 可信事实
 
-Graph routing uses facts produced by deterministic validators, state providers or human decisions. Model outputs are candidate values until an evidence checker commits them as facts.
+Graph 路由只使用由确定性校验器、状态提供方或人工决策产生的事实。模型输出首先是候选值，只有通过证据检查器确认后才能写入可信事实。
 
-## Agent boundaries
+## Agent 边界
 
-BPMN lanes are responsibility hints. This implementation generates an Agent Profile only from an explicit `agent_ref` annotation supplied by the business contract or an approved override. A future responsibility partitioner may propose annotations, but cannot deploy them without review.
+BPMN 泳道只表示职责提示。本实现仅根据业务契约提供的明确 `agent_ref` 注解或已经批准的职责覆盖生成 Agent Profile。未来的职责划分器可以提出注解建议，但未经评审不能部署。
 
-## Loop boundaries
+## 循环边界
 
-A persistent loop must define intent, trigger, checker, maximum rounds, token budget, stop conditions and escalation. A BPMN back edge without these fields is a local graph cycle, not a persistent LoopSpec.
+持久循环必须定义意图、触发器、检查器、最大轮数、Token 预算、停止条件和升级策略。缺少这些字段的 BPMN 回边只是局部 Graph 环路，不能编译为持久化 LoopSpec。
 
-## Runtime boundary
+## 运行时边界
 
-Adapters must announce capabilities such as durable sessions, append-only events, human gates, scheduled loops and sandbox restrictions. Packaging fails when a required capability is unavailable; adapters cannot silently ignore it.
+适配器必须声明其能力，例如持久会话、仅追加事件、人工关卡、定时循环和沙箱限制。当适配器缺少必需能力时，打包必须失败；适配器不能静默忽略该能力。
