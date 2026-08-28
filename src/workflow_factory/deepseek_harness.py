@@ -313,12 +313,15 @@ class DeepSeekReadonlyAdapter:
 
     @staticmethod
     def _prompt(route: dict, profile: dict, state: dict, observation: ToolObservation) -> str:
+        evidence_kinds = [
+            item["kind"]
+            for item in observation.evidence
+            if isinstance(item, dict) and isinstance(item.get("kind"), str)
+        ]
         payload = {
             "instruction": (
-                "复核宿主工具证据。只返回一个 JSON 对象，不要 Markdown。"
-                "对象必须且只能包含 status、facts、evidence；status 必须为 completed；"
-                "facts 必须逐字等于 trusted_tool_observation.facts；"
-                "evidence 填写实际使用的证据 kind。"
+                "复核宿主工具证据，然后只返回 required_response 对象本身的 JSON 序列化；"
+                "不要 Markdown、解释或新增字段，不要把 evidence 字符串改成对象。"
             ),
             "workflow": {
                 "node_id": route["node_id"],
@@ -335,6 +338,11 @@ class DeepSeekReadonlyAdapter:
                 "facts": observation.facts,
                 "evidence": observation.evidence,
                 "output_digest": observation.output_digest,
+            },
+            "required_response": {
+                "status": "completed",
+                "facts": observation.facts,
+                "evidence": evidence_kinds,
             },
         }
         return json.dumps(payload, ensure_ascii=False, sort_keys=True)
@@ -371,6 +379,13 @@ class DeepSeekReadonlyAdapter:
         envelope = _strict_model_envelope(final_response)
         if envelope["facts"] != observation.facts:
             raise ValueError("Model facts differ from trusted tool facts")
+        expected_evidence = [
+            item["kind"]
+            for item in observation.evidence
+            if isinstance(item, dict) and isinstance(item.get("kind"), str)
+        ]
+        if envelope["evidence"] != expected_evidence:
+            raise ValueError("Model evidence differs from trusted tool evidence kinds")
         candidate = deep_merge(copy.deepcopy(state["facts"]), envelope["facts"])
         failed = [
             item

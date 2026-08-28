@@ -31,11 +31,13 @@ class FakeHarnessClient:
         self,
         fail_once: bool = False,
         wrong_facts: bool = False,
+        wrong_evidence: bool = False,
         fail_on_call: int | None = None,
     ):
         self.fail_on_call = 1 if fail_once else fail_on_call
         self.failed = False
         self.wrong_facts = wrong_facts
+        self.wrong_evidence = wrong_evidence
         self.calls: list[dict] = []
         self.closed = False
 
@@ -49,6 +51,8 @@ class FakeHarnessClient:
         if self.wrong_facts:
             facts = {"intent": {"parsed": False}}
         evidence = [item["kind"] for item in payload["trusted_tool_observation"]["evidence"]]
+        if self.wrong_evidence:
+            evidence = ["untrusted-evidence"]
         return SimpleNamespace(
             session_id=session_id or "fake-session",
             final_response=json.dumps(
@@ -169,6 +173,31 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
                 self.runtime_dir,
                 DeepSeekReadonlyAdapter(client=client),
             ).run(self.facts, run_id="run-untrusted-facts")
+
+    def test_prompt_supplies_exact_required_response(self) -> None:
+        client = FakeHarnessClient()
+        DeepSeekReadonlyRunner(
+            self.package,
+            self.runtime_dir,
+            DeepSeekReadonlyAdapter(client=client),
+        ).run(self.facts, run_id="run-required-response")
+        payload = client.calls[0]["payload"]
+        self.assertEqual(
+            payload["required_response"],
+            {
+                "status": "completed",
+                "facts": {"intent": {"parsed": True}},
+                "evidence": ["business-description-digest"],
+            },
+        )
+
+    def test_rejects_model_evidence_that_differs_from_trusted_tool(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Model evidence differs"):
+            DeepSeekReadonlyRunner(
+                self.package,
+                self.runtime_dir,
+                DeepSeekReadonlyAdapter(client=FakeHarnessClient(wrong_evidence=True)),
+            ).run(self.facts, run_id="run-untrusted-evidence")
 
     def test_surfaces_structured_harness_error_and_redacts_api_key(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "AUTHENTICATION_FAILED") as caught:
