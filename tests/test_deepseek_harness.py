@@ -27,8 +27,14 @@ from workflow_factory.util import read_json, write_json  # noqa: E402
 
 
 class FakeHarnessClient:
-    def __init__(self, fail_once: bool = False, wrong_facts: bool = False):
-        self.fail_once = fail_once
+    def __init__(
+        self,
+        fail_once: bool = False,
+        wrong_facts: bool = False,
+        fail_on_call: int | None = None,
+    ):
+        self.fail_on_call = 1 if fail_once else fail_on_call
+        self.failed = False
         self.wrong_facts = wrong_facts
         self.calls: list[dict] = []
         self.closed = False
@@ -36,8 +42,8 @@ class FakeHarnessClient:
     def run(self, input: str, *, session_id: str | None = None):
         payload = json.loads(input)
         self.calls.append({"payload": payload, "session_id": session_id})
-        if self.fail_once:
-            self.fail_once = False
+        if self.fail_on_call == len(self.calls) and not self.failed:
+            self.failed = True
             raise RuntimeError("injected Harness interruption")
         facts = payload["trusted_tool_observation"]["facts"]
         if self.wrong_facts:
@@ -194,6 +200,93 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
             ).run(run_id="run-capabilities")
 
 
+class DeepSeekReadonlyMultinodeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.package = self.root / "package"
+        self.runtime_dir = self.root / "runtime"
+        self.business = ROOT / "examples/deepseek-readonly-multinode/business-requirement.json"
+        bpmn = self.root / "process.bpmn"
+        generate_bpmn(self.business, bpmn)
+        report = compile_package(
+            bpmn,
+            self.business,
+            ROOT / "fixtures/catalog.snapshot.json",
+            ROOT / "contracts/system-definition.json",
+            self.package,
+        )
+        self.assertEqual(report["generated_agents"], 2)
+        self.assertEqual(report["resolved_tools"], 2)
+        self.facts = read_json(
+            ROOT / "examples/deepseek-readonly-multinode/initial-facts.json"
+        )
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def test_two_agents_and_tools_route_clear_description_to_ready(self) -> None:
+        client = FakeHarnessClient()
+        report = DeepSeekReadonlyRunner(
+            self.package,
+            self.runtime_dir,
+            DeepSeekReadonlyAdapter(client=client),
+        ).run(self.facts, run_id="run-multinode-ready")
+
+        self.assertEqual(report["result"], "PASS")
+        self.assertEqual(report["completed_actions"], 2)
+        self.assertEqual(len(client.calls), 2)
+        runtime = ReferenceRuntime(self.package, self.runtime_dir)
+        state = runtime.load_state("run-multinode-ready")
+        self.assertEqual(state["current_node"], "ready")
+        self.assertFalse(state["facts"]["analysis"]["ambiguous"])
+        self.assertEqual(state["completed_nodes"], ["parse-intent", "check-ambiguity"])
+        event_types = [item["type"] for item in runtime.events.read("run-multinode-ready")]
+        self.assertEqual(event_types.count("tool.observation.accepted"), 2)
+        self.assertEqual(event_types.count("agent.turn.completed"), 2)
+
+    def test_trusted_ambiguity_fact_routes_to_clarification_terminal(self) -> None:
+        facts = read_json(
+            ROOT / "examples/deepseek-readonly-multinode/ambiguous-facts.json"
+        )
+        report = DeepSeekReadonlyRunner(
+            self.package,
+            self.runtime_dir,
+            DeepSeekReadonlyAdapter(client=FakeHarnessClient()),
+        ).run(facts, run_id="run-multinode-ambiguous")
+
+        self.assertEqual(report["result"], "PASS")
+        state = ReferenceRuntime(self.package, self.runtime_dir).load_state(
+            "run-multinode-ambiguous"
+        )
+        self.assertEqual(state["current_node"], "needs-clarification")
+        self.assertTrue(state["facts"]["analysis"]["ambiguous"])
+        self.assertEqual(
+            state["facts"]["analysis"]["ambiguity_terms"],
+            ["尽快", "适当", "相关人员", "视情况"],
+        )
+
+    def test_second_agent_interruption_resumes_without_replaying_first_node(self) -> None:
+        client = FakeHarnessClient(fail_on_call=2)
+        runner = DeepSeekReadonlyRunner(
+            self.package,
+            self.runtime_dir,
+            DeepSeekReadonlyAdapter(client=client),
+        )
+        with self.assertRaisesRegex(RuntimeError, "injected Harness interruption"):
+            runner.run(self.facts, run_id="run-multinode-resume")
+        paused = runner.runtime.load_state("run-multinode-resume")
+        self.assertEqual(paused["status"], "paused")
+        self.assertEqual(paused["completed_nodes"], ["parse-intent"])
+
+        report = runner.run(self.facts, run_id="run-multinode-resume")
+        self.assertEqual(report["result"], "PASS")
+        self.assertEqual(len(client.calls), 3)
+        self.assertEqual(client.calls[1]["session_id"], client.calls[2]["session_id"])
+        self.assertNotEqual(client.calls[0]["session_id"], client.calls[2]["session_id"])
+        self.assertEqual(runner.runtime.replay("run-multinode-resume")["result"], "PASS")
+
+
 @unittest.skipUnless(
     os.environ.get("DSH_LIVE_TEST") == "1" and platform.system() in {"Linux", "Darwin"},
     "requires DSH_LIVE_TEST=1, credentials, SDK and an official supported platform",
@@ -229,6 +322,46 @@ class DeepSeekReadonlyHarnessLiveTest(unittest.TestCase):
             finally:
                 adapter.close()
             self.assertEqual(report["result"], "PASS")
+
+
+@unittest.skipUnless(
+    os.environ.get("DSH_MULTINODE_LIVE_TEST") == "1"
+    and platform.system() in {"Linux", "Darwin"},
+    "requires DSH_MULTINODE_LIVE_TEST=1, credentials, SDK and a supported platform",
+)
+class DeepSeekReadonlyMultinodeLiveTest(unittest.TestCase):
+    def test_official_sdk_runs_two_agent_graph(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = root / "package"
+            bpmn = root / "process.bpmn"
+            example = ROOT / "examples/deepseek-readonly-multinode"
+            business = example / "business-requirement.json"
+            generate_bpmn(business, bpmn)
+            compile_package(
+                bpmn,
+                business,
+                ROOT / "fixtures/catalog.snapshot.json",
+                ROOT / "contracts/system-definition.json",
+                package,
+            )
+            runtime_dir = root / "runtime"
+            adapter = DeepSeekReadonlyAdapter(
+                settings=DeepSeekHarnessSettings(
+                    cwd=runtime_dir / "workspace",
+                    session_root=runtime_dir / "harness-sessions",
+                    cordis=ROOT / "adapters/deepseek-harness/readonly.cordis.yml",
+                )
+            )
+            try:
+                report = DeepSeekReadonlyRunner(package, runtime_dir, adapter).run(
+                    read_json(example / "initial-facts.json"),
+                    run_id="run-multinode-live",
+                )
+            finally:
+                adapter.close()
+            self.assertEqual(report["result"], "PASS")
+            self.assertEqual(report["completed_actions"], 2)
 
 
 if __name__ == "__main__":

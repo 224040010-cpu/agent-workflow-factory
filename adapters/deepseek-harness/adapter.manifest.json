@@ -35,5 +35,9 @@
     "no-model-facing-tools",
     "model-facts-equal-trusted-tool-facts"
   ],
+  "mvp_host_bindings": [
+    "parse-business-intent@1.0.0",
+    "detect-description-ambiguity@1.0.0"
+  ],
   "unsupported_behavior": "fail-before-execution-never-silently-drop"
 }

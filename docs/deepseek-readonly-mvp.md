@@ -111,7 +111,7 @@ python scripts/workflowctl.py run \
 
 ## 下一阶段
 
-MVP 后续应按顺序推进：
+其中“增加第二个只读 Tool 和多节点 Graph”已在 v0.6.0 完成，详见 [`deepseek-readonly-multinode.md`](deepseek-readonly-multinode.md)。后续继续推进：
 
 1. 为更多 Registry Tool 建立独立、可签名的宿主绑定包；
 2. 将 Tool 输入/输出升级为按 Tool Schema 校验，而不是仅校验通用证据信封；

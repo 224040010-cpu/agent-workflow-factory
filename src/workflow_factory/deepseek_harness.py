@@ -183,8 +183,50 @@ def _parse_business_intent(descriptor: dict, request: dict, idempotency_key: str
     }
 
 
+def _detect_description_ambiguity(
+    descriptor: dict,
+    request: dict,
+    idempotency_key: str,
+) -> dict:
+    del descriptor
+    facts = request.get("facts", {})
+    description = fact_value(facts, "business.description")
+    if not isinstance(description, str) or not description.strip():
+        raise ValueError("detect-description-ambiguity requires facts.business.description")
+    if fact_value(facts, "intent.parsed") is not True:
+        raise ValueError("detect-description-ambiguity requires facts.intent.parsed=true")
+    markers = ("尽快", "适当", "必要时", "酌情", "相关人员", "视情况", "若干")
+    found = [marker for marker in markers if marker in description]
+    material = json.dumps(
+        {"description": " ".join(description.split()), "markers": markers},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return {
+        "facts": {
+            "analysis": {
+                "ambiguity_checked": True,
+                "ambiguous": bool(found),
+                "ambiguity_terms": found,
+            }
+        },
+        "evidence": [
+            {
+                "kind": "deterministic-ambiguity-scan",
+                "digest": f"sha256:{hashlib.sha256(material.encode('utf-8')).hexdigest()}",
+                "rule_version": "ambiguity-markers/v1",
+                "matches": len(found),
+                "idempotency_key": idempotency_key,
+            }
+        ],
+    }
+
+
 def builtin_readonly_tool_handlers() -> dict[str, ToolHandler]:
-    return {"bpmn-tools:parse_business_intent()": _parse_business_intent}
+    return {
+        "bpmn-tools:parse_business_intent()": _parse_business_intent,
+        "bpmn-tools:detect_description_ambiguity()": _detect_description_ambiguity,
+    }
 
 
 def _strict_model_envelope(raw: str) -> dict:

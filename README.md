@@ -34,6 +34,7 @@
 - 持久化暂停/恢复检查点，以及基于哈希链的轨迹重放。
 - 为业务人员返回含 BPMN DI 的 `.bpmn` 文件、整体流程 SVG 和统一交付清单。
 - DeepSeek Harness 只读端到端执行：固定 Tool、真实 Agent 会话、可信 facts、暂停恢复与轨迹回放。
+- DeepSeek 多节点只读 Graph：两个 Agent、两个 Tool、可信 facts 网关与双终点路由。
 
 尚未实现：理解任意自由文本的模型解释器、生产级调度器与会话存储、DeepSeek 人工审批和定时循环绑定、带签名的事件存储、补偿事务和交互式可视化界面。
 
@@ -70,6 +71,7 @@ python scripts/run_example.py
 python scripts/run_text_example.py
 python scripts/run_runtime_example.py
 python scripts/run_deepseek_mvp.py
+python scripts/run_deepseek_multinode_mvp.py
 python -m unittest discover -s tests -v
 ```
 
@@ -91,4 +93,4 @@ python -m unittest discover -s tests -v
 - Registry 状态变更；
 - 运行期间从持续变化的 Git 分支动态发现能力。
 
-自然语言输入格式和返回文件参见 [`docs/business-text-to-diagram.md`](docs/business-text-to-diagram.md)。架构和运行时评审细节参见 [`docs/architecture.md`](docs/architecture.md)、[`docs/reference-runtime.md`](docs/reference-runtime.md)、[`docs/deepseek-readonly-mvp.md`](docs/deepseek-readonly-mvp.md) 和双仓共享的总定义。
+自然语言输入格式和返回文件参见 [`docs/business-text-to-diagram.md`](docs/business-text-to-diagram.md)。架构和运行时评审细节参见 [`docs/architecture.md`](docs/architecture.md)、[`docs/reference-runtime.md`](docs/reference-runtime.md)、[`docs/deepseek-readonly-mvp.md`](docs/deepseek-readonly-mvp.md)、[`docs/deepseek-readonly-multinode.md`](docs/deepseek-readonly-multinode.md) 和双仓共享的总定义。

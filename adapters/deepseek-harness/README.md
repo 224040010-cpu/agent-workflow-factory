@@ -12,8 +12,9 @@
 - Harness 会话摘要映射到本仓库的追加式哈希轨迹；
 - 支持执行中断后的检查点恢复和相同会话复用；
 - 能力不足时在执行前拒绝。
+- 支持两个 Agent、两个只读 Tool 和可信 facts 排他网关的多节点 Graph。
 
-`readonly.cordis.yml` 特意不加载 Bash、编辑器、文件系统、Skill 或其他模型侧 Tool。完整设计、运行命令与测试结论见 [`../../docs/deepseek-readonly-mvp.md`](../../docs/deepseek-readonly-mvp.md)。
+`readonly.cordis.yml` 特意不加载 Bash、编辑器、文件系统、Skill 或其他模型侧 Tool。单节点设计见 [`../../docs/deepseek-readonly-mvp.md`](../../docs/deepseek-readonly-mvp.md)，多节点设计见 [`../../docs/deepseek-readonly-multinode.md`](../../docs/deepseek-readonly-multinode.md)。
 
 ## 尚未开放
 

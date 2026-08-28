@@ -1,0 +1,82 @@
+{
+  "$schema": "../../schemas/business-requirement.schema.json",
+  "schema_version": "1.0.0",
+  "workflow_id": "deepseek-readonly-multinode-review",
+  "version": "1.0.0",
+  "name": "DeepSeek 多节点只读业务描述复核",
+  "intent": "先解析业务意图，再检查描述歧义，并根据可信事实路由到可继续或需澄清终点。",
+  "entry": "parse-intent",
+  "required_skills": [],
+  "participants": [
+    {
+      "id": "lane-interpreter",
+      "name": "业务意图解析 Agent",
+      "kind": "agent",
+      "agent_ref": "intent-parser-agent"
+    },
+    {
+      "id": "lane-reviewer",
+      "name": "描述歧义复核 Agent",
+      "kind": "agent",
+      "agent_ref": "ambiguity-review-agent"
+    }
+  ],
+  "steps": [
+    {
+      "id": "parse-intent",
+      "name": "解析业务意图",
+      "kind": "service",
+      "participant": "lane-interpreter",
+      "tool_ref": "parse-business-intent",
+      "completion_evidence": ["facts.intent.parsed == true"],
+      "risk_level": "L1"
+    },
+    {
+      "id": "check-ambiguity",
+      "name": "检查业务描述歧义",
+      "kind": "service",
+      "participant": "lane-reviewer",
+      "tool_ref": "detect-description-ambiguity",
+      "completion_evidence": ["facts.analysis.ambiguity_checked == true"],
+      "risk_level": "L1"
+    },
+    {
+      "id": "route-by-ambiguity",
+      "name": "描述是否含有歧义",
+      "kind": "exclusive_gateway",
+      "participant": "lane-reviewer",
+      "completion_evidence": [],
+      "risk_level": "L0"
+    },
+    {
+      "id": "ready",
+      "name": "业务描述可继续编译",
+      "kind": "end",
+      "participant": "lane-reviewer",
+      "completion_evidence": [],
+      "risk_level": "L0"
+    },
+    {
+      "id": "needs-clarification",
+      "name": "业务描述需要澄清",
+      "kind": "end",
+      "participant": "lane-reviewer",
+      "completion_evidence": [],
+      "risk_level": "L0"
+    }
+  ],
+  "transitions": [
+    {"from": "parse-intent", "to": "check-ambiguity"},
+    {"from": "check-ambiguity", "to": "route-by-ambiguity"},
+    {
+      "from": "route-by-ambiguity",
+      "to": "needs-clarification",
+      "condition": "facts.analysis.ambiguous == true"
+    },
+    {
+      "from": "route-by-ambiguity",
+      "to": "ready",
+      "condition": "facts.analysis.ambiguous == false"
+    }
+  ]
+}
