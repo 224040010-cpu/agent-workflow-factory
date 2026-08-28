@@ -1,0 +1,16 @@
+{
+  "statement": {
+    "schema_version": "1.0.0",
+    "subject": {
+      "name": "trusted-publishers.json",
+      "digest": "sha256:7c93b1aa23491a29e131b7910a350094d88f901fd09ea968d8d3794426522b39",
+      "media_type": "application/json"
+    },
+    "publisher": "agent-workflow-factory-trust-root",
+    "key_id": "sha256:6e4abefc8fd1f6f344d3f931635b374aaf75a6266f33c4b184af3804c833ef27",
+    "algorithm": "Ed25519",
+    "canonicalization": "AWF-CANONICAL-JSON-v1",
+    "issued_at": "2026-08-28T00:00:00+00:00"
+  },
+  "signature": "ryAka/VTU2/kzxUJUS4Y3ZcmjFtE2y+HuSsIHor0K5waAPIm1bKwMfhetS2ZnWI3YBUQ/2IbtBL6UXF4WIQFAA=="
+}

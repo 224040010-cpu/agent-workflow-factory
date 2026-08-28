@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
+import shutil
 
 from .bpmn import parse_bpmn
 from .catalog import resolve_catalog
-from .signing import sign_artifact
+from .package_integrity import write_signed_package_manifest
+from .signing import (
+    FileEd25519SigningProvider,
+    SigningProvider,
+    sign_artifact_with_provider,
+)
 from .util import read_json, risk_number, write_json
 
 
@@ -149,7 +155,13 @@ def compile_package(
     output_dir: Path,
     signing_key_path: Path | None = None,
     signing_publisher: str = "agent-workflow-factory-build",
+    signing_provider: SigningProvider | None = None,
 ) -> dict:
+    if signing_key_path is not None and signing_provider is not None:
+        raise ValueError("Provide either signing_key_path or signing_provider, not both")
+    provider = signing_provider
+    if provider is None and signing_key_path is not None:
+        provider = FileEd25519SigningProvider(signing_key_path)
     business = read_json(business_path)
     definition = read_json(definition_path)
     ir = parse_bpmn(bpmn_path)
@@ -194,12 +206,14 @@ def compile_package(
 
     write_json(output_dir / "workflow.ir.json", ir)
     write_json(output_dir / "graph.json", graph)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(bpmn_path, output_dir / "process.bpmn")
     lock_path = output_dir / "registry.lock.json"
     write_json(lock_path, resolved.lockfile())
-    if signing_key_path is not None:
-        sign_artifact(
+    if provider is not None:
+        sign_artifact_with_provider(
             lock_path,
-            signing_key_path,
+            provider,
             output_dir / "registry.lock.sig.json",
             signing_publisher,
         )
@@ -218,7 +232,8 @@ def compile_package(
         "resolved_tools": len(resolved.tools),
         "generated_agents": len(profiles),
         "generated_loops": 1 if loop_spec else 0,
-        "registry_lock_signed": signing_key_path is not None,
+        "registry_lock_signed": provider is not None,
+        "package_manifest_signed": provider is not None,
         "warnings": [
             f"Node {node['id']} has no explicit Agent; host executes its action."
             for node in ir["spec"]["nodes"]
@@ -227,4 +242,10 @@ def compile_package(
         ],
     }
     write_json(output_dir / "compile-report.json", report)
+    if provider is not None:
+        write_signed_package_manifest(
+            output_dir,
+            publisher=signing_publisher,
+            signing_provider=provider,
+        )
     return report

@@ -139,11 +139,10 @@ python -m unittest discover -s tests -p 'test_deepseek_harness.py' -v
 - 已签署清单与运行时 Binding 不一致时拒绝；
 - 两节点 ready/模糊分支及中断恢复仍可重放。
 
-## v0.9 建议边界
+## v0.9 完成情况
 
-- 接入云 KMS/HSM 或 Sigstore，避免文件型未加密私钥；
-- 为信任库本身增加独立根签名和离线恢复流程；
-- 对整个工作流软件包生成清单并签署，而不只签 `registry.lock.json`；
+- 信任库独立根签名、完整工作流包清单签名和 KMS/HSM Provider 接口已完成，详见 [`deepseek-readonly-v0.9.md`](deepseek-readonly-v0.9.md)；
+- 具体云 KMS/HSM 驱动仍待选择；
 - 在 Linux 定时 CI 中加入真实 DeepSeek SDK 与密钥轮换演练。
 
 ## 官方依据

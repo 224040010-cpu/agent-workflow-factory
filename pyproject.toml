@@ -1,6 +1,6 @@
 [project]
 name = "agent-workflow-factory"
-version = "0.8.0"
+version = "0.9.0"
 description = "Compile business language into governed Agent Graph and BPMN views"
 requires-python = ">=3.11"
 dependencies = ["cryptography>=45,<51"]

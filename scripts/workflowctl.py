@@ -21,9 +21,11 @@ from workflow_factory.deepseek_harness import (  # noqa: E402
 )
 from workflow_factory.reference_runtime import ReferenceRuntime  # noqa: E402
 from workflow_factory.signing import (  # noqa: E402
+    generate_root_key,
     generate_signing_key,
     sign_artifact,
     verify_artifact,
+    verify_trust_store,
 )
 from workflow_factory.text_pipeline import build_from_business_text  # noqa: E402
 from workflow_factory.util import read_json  # noqa: E402
@@ -85,11 +87,19 @@ def main() -> int:
     validate.add_argument("package", type=Path)
     validate.add_argument("--trust-store", type=Path)
     validate.add_argument("--require-registry-signature", action="store_true")
+    validate.add_argument("--require-package-signature", action="store_true")
+    validate.add_argument("--trust-store-signature", type=Path)
+    validate.add_argument("--trust-root-public-key", type=Path)
+    validate.add_argument("--require-trust-root", action="store_true")
 
     keygen = subparsers.add_parser("keygen")
     keygen.add_argument("--private-key", type=Path, required=True)
     keygen.add_argument("--trust-store", type=Path, required=True)
     keygen.add_argument("--publisher", required=True)
+
+    root_keygen = subparsers.add_parser("keygen-root")
+    root_keygen.add_argument("--private-key", type=Path, required=True)
+    root_keygen.add_argument("--public-key", type=Path, required=True)
 
     sign = subparsers.add_parser("sign-artifact")
     sign.add_argument("artifact", type=Path)
@@ -102,6 +112,11 @@ def main() -> int:
     verify_signature.add_argument("--signature", type=Path, required=True)
     verify_signature.add_argument("--trust-store", type=Path, required=True)
     verify_signature.add_argument("--publisher", required=True)
+
+    verify_trust = subparsers.add_parser("verify-trust")
+    verify_trust.add_argument("--trust-store", type=Path, required=True)
+    verify_trust.add_argument("--signature", type=Path, required=True)
+    verify_trust.add_argument("--root-public-key", type=Path, required=True)
 
     runtime_start = subparsers.add_parser("runtime-start")
     runtime_start.add_argument("package", type=Path)
@@ -156,6 +171,16 @@ def main() -> int:
         "--trust-store", type=Path, default=ROOT / "trust/trusted-publishers.json"
     )
     run_command.add_argument(
+        "--trust-store-signature",
+        type=Path,
+        default=ROOT / "trust/trusted-publishers.sig.json",
+    )
+    run_command.add_argument(
+        "--trust-root-public-key",
+        type=Path,
+        default=ROOT / "trust/root-public-key.json",
+    )
+    run_command.add_argument(
         "--binding-manifest",
         type=Path,
         default=ROOT / "adapters/deepseek-harness/readonly-tool-bindings.json",
@@ -203,6 +228,10 @@ def main() -> int:
                 args.package,
                 trust_store=args.trust_store,
                 require_registry_signature=args.require_registry_signature,
+                require_package_signature=args.require_package_signature,
+                trust_store_signature=args.trust_store_signature,
+                trust_root_public_key=args.trust_root_public_key,
+                require_trust_root=args.require_trust_root,
             )
             if errors:
                 for error in errors:
@@ -213,6 +242,9 @@ def main() -> int:
             record = generate_signing_key(
                 args.private_key, args.trust_store, args.publisher
             )
+            print(json.dumps(record, ensure_ascii=False, indent=2))
+        elif args.command == "keygen-root":
+            record = generate_root_key(args.private_key, args.public_key)
             print(json.dumps(record, ensure_ascii=False, indent=2))
         elif args.command == "sign-artifact":
             envelope = sign_artifact(
@@ -228,6 +260,13 @@ def main() -> int:
                 args.signature,
                 args.trust_store,
                 args.publisher,
+            )
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        elif args.command == "verify-trust":
+            report = verify_trust_store(
+                args.trust_store,
+                args.signature,
+                args.root_public_key,
             )
             print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.command == "runtime-start":
@@ -272,6 +311,8 @@ def main() -> int:
                     adapter,
                     DeepSeekTrustPolicy(
                         trust_store=args.trust_store,
+                        trust_store_signature=args.trust_store_signature,
+                        trust_root_public_key=args.trust_root_public_key,
                         binding_manifest=args.binding_manifest,
                         binding_signature=args.binding_signature,
                     ),

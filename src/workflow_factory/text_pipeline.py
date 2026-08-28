@@ -6,6 +6,7 @@ from .business import render_bpmn
 from .compiler import compile_package
 from .diagram import render_graph_svg
 from .natural_language import interpret_business_text
+from .signing import SigningProvider
 from .util import read_json, sha256_file, write_json
 from .validator import validate_package
 
@@ -18,6 +19,7 @@ def build_from_business_text(
     workflow_id: str | None = None,
     signing_key_path: Path | None = None,
     signing_publisher: str = "agent-workflow-factory-build",
+    signing_provider: SigningProvider | None = None,
 ) -> dict:
     text = source_path.read_text(encoding="utf-8")
     requirement, interpretation = interpret_business_text(text, workflow_id=workflow_id)
@@ -40,6 +42,7 @@ def build_from_business_text(
         package_dir,
         signing_key_path=signing_key_path,
         signing_publisher=signing_publisher,
+        signing_provider=signing_provider,
     )
     validation_errors = validate_package(package_dir)
     if validation_errors:

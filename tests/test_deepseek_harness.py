@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from workflow_factory.business import generate_bpmn  # noqa: E402
 from workflow_factory.compiler import compile_package  # noqa: E402
+from workflow_factory.package_integrity import write_signed_package_manifest  # noqa: E402
 from workflow_factory.deepseek_harness import (  # noqa: E402
     BudgetExceeded,
     DeepSeekHarnessSettings,
@@ -31,7 +32,11 @@ from workflow_factory.deepseek_harness import (  # noqa: E402
     harness_usage,
 )
 from workflow_factory.reference_runtime import ReferenceRuntime  # noqa: E402
-from workflow_factory.signing import generate_signing_key, sign_artifact  # noqa: E402
+from workflow_factory.signing import (  # noqa: E402
+    generate_root_key,
+    generate_signing_key,
+    sign_artifact,
+)
 from workflow_factory.util import read_json, write_json  # noqa: E402
 
 
@@ -125,8 +130,20 @@ def prepare_test_trust(root: Path) -> tuple[Path, DeepSeekTrustPolicy]:
         trust_store,
         "agent-workflow-factory-build",
     )
+    root_private = root / "trust-root.pem"
+    root_public = root / "trust-root-public.json"
+    trust_signature = root / "trusted-publishers.sig.json"
+    generate_root_key(root_private, root_public)
+    sign_artifact(
+        trust_store,
+        root_private,
+        trust_signature,
+        "agent-workflow-factory-trust-root",
+    )
     return private_key, DeepSeekTrustPolicy(
         trust_store=trust_store,
+        trust_store_signature=trust_signature,
+        trust_root_public_key=root_public,
         binding_manifest=ROOT / "adapters/deepseek-harness/readonly-tool-bindings.json",
         binding_signature=(
             ROOT / "adapters/deepseek-harness/readonly-tool-bindings.sig.json"
@@ -162,6 +179,9 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
             self.package, self.runtime_dir, adapter, self.trust_policy
         )
 
+    def resign_package(self) -> None:
+        write_signed_package_manifest(self.package, self.private_key)
+
     def test_readonly_end_to_end_reaches_terminal_and_replays(self) -> None:
         client = FakeHarnessClient()
         adapter = DeepSeekReadonlyAdapter(client=client)
@@ -181,13 +201,19 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
         self.assertIn("agent.turn.completed", event_types)
         self.assertIn("facts.verified", event_types)
         self.assertIn("artifact.signatures.accepted", event_types)
+        signature_event = next(
+            item
+            for item in runtime.events.read("run-e2e")
+            if item["type"] == "artifact.signatures.accepted"
+        )
+        self.assertEqual(len(signature_event["payload"]["artifacts"]), 4)
         self.assertEqual(state := runtime.load_state("run-e2e"), runtime.replay("run-e2e")["state"])
         self.assertEqual(state["budget_usage"]["total"]["model_turns"], 1)
         self.assertEqual(state["budget_usage"]["total"]["tool_calls"], 1)
 
     def test_requires_trust_policy_before_model(self) -> None:
         client = FakeHarnessClient()
-        with self.assertRaisesRegex(ValueError, "requires an artifact trust policy"):
+        with self.assertRaisesRegex(ValueError, "requires a rooted artifact trust policy"):
             DeepSeekReadonlyRunner(
                 self.package,
                 self.runtime_dir,
@@ -203,6 +229,26 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "digest does not match signature subject"):
             self.runner(DeepSeekReadonlyAdapter(client=client)).run(
                 self.facts, run_id="run-lock-tampered"
+            )
+        self.assertEqual(client.calls, [])
+
+    def test_rejects_injected_package_file_before_model(self) -> None:
+        write_json(self.package / "injected.json", {"untrusted": True})
+        client = FakeHarnessClient()
+        with self.assertRaisesRegex(ValueError, "unsigned files: injected.json"):
+            self.runner(DeepSeekReadonlyAdapter(client=client)).run(
+                self.facts, run_id="run-package-injected"
+            )
+        self.assertEqual(client.calls, [])
+
+    def test_rejects_tampered_trust_store_before_model(self) -> None:
+        trust = read_json(self.trust_policy.trust_store)
+        trust["keys"][0]["status"] = "revoked"
+        write_json(self.trust_policy.trust_store, trust)
+        client = FakeHarnessClient()
+        with self.assertRaisesRegex(ValueError, "digest does not match signature subject"):
+            self.runner(DeepSeekReadonlyAdapter(client=client)).run(
+                self.facts, run_id="run-trust-tampered"
             )
         self.assertEqual(client.calls, [])
 
@@ -255,6 +301,7 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
             self.package / "registry.lock.sig.json",
             "agent-workflow-factory-build",
         )
+        self.resign_package()
         client = FakeHarnessClient()
         with self.assertRaisesRegex(ValueError, "Tool is not read-only"):
             self.runner(DeepSeekReadonlyAdapter(client=client)).run(
@@ -316,6 +363,7 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
         profile = read_json(profile_path)
         profile["spec"]["budgets"]["max_turns"] = 0
         write_json(profile_path, profile)
+        self.resign_package()
         client = FakeHarnessClient()
         runner = self.runner(DeepSeekReadonlyAdapter(client=client))
         with self.assertRaisesRegex(BudgetExceeded, "before execution"):
@@ -330,6 +378,7 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
         profile = read_json(profile_path)
         profile["spec"]["budgets"]["max_tokens"] = 5
         write_json(profile_path, profile)
+        self.resign_package()
         client = FakeHarnessClient(
             usage={
                 "inputTokens": 3,

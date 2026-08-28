@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0.0",
+  "key_id": "sha256:6e4abefc8fd1f6f344d3f931635b374aaf75a6266f33c4b184af3804c833ef27",
+  "publisher": "agent-workflow-factory-trust-root",
+  "algorithm": "Ed25519",
+  "status": "active",
+  "public_key": "qdBSdJeku4LS7G0QvB6NbuvgrXgPH8h6sxWQKvTKbhk="
+}

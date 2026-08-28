@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .signing import verify_artifact
+from .package_integrity import verify_package_manifest
+from .signing import verify_artifact, verify_trust_store
 from .util import read_json
 
 
@@ -82,6 +83,10 @@ def validate_package(
     package_dir: Path,
     trust_store: Path | None = None,
     require_registry_signature: bool = False,
+    require_package_signature: bool = False,
+    trust_store_signature: Path | None = None,
+    trust_root_public_key: Path | None = None,
+    require_trust_root: bool = False,
     expected_publisher: str = "agent-workflow-factory-build",
 ) -> list[str]:
     errors: list[str] = []
@@ -113,6 +118,23 @@ def validate_package(
             errors.append(f"locked asset {asset.get('name')} has ineligible status")
 
     signature_path = package_dir / "registry.lock.sig.json"
+    if require_trust_root and (
+        trust_store is None
+        or trust_store_signature is None
+        or trust_root_public_key is None
+    ):
+        errors.append("root trust verification requires store, signature and root public key")
+    if (
+        trust_store is not None
+        and trust_store_signature is not None
+        and trust_root_public_key is not None
+    ):
+        try:
+            verify_trust_store(
+                trust_store, trust_store_signature, trust_root_public_key
+            )
+        except (OSError, ValueError, KeyError) as exc:
+            errors.append(f"trust store root signature invalid: {exc}")
     if require_registry_signature and not signature_path.is_file():
         errors.append("registry.lock.json is missing required detached signature")
     if require_registry_signature and trust_store is None:
@@ -127,6 +149,17 @@ def validate_package(
             )
         except (OSError, ValueError, KeyError) as exc:
             errors.append(f"registry.lock signature invalid: {exc}")
+
+    package_signature = package_dir / "package.manifest.sig.json"
+    if require_package_signature and not package_signature.is_file():
+        errors.append("package manifest is missing required detached signature")
+    if require_package_signature and trust_store is None:
+        errors.append("package signature verification requires a trust store")
+    if package_signature.is_file() and trust_store is not None:
+        try:
+            verify_package_manifest(package_dir, trust_store, expected_publisher)
+        except (OSError, ValueError, KeyError) as exc:
+            errors.append(f"package signature invalid: {exc}")
 
     loop = ir.get("spec", {}).get("loop")
     if loop and not list((package_dir / "loops").glob("*.loop.json")):

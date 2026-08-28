@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow-factory.local/schemas/root-public-key.schema.json",
+  "title": "Agent Workflow Factory Trust Root Public Key",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "key_id", "publisher", "algorithm", "status", "public_key"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "key_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "publisher": {"const": "agent-workflow-factory-trust-root"},
+    "algorithm": {"const": "Ed25519"},
+    "status": {"const": "active"},
+    "public_key": {"type": "string", "minLength": 1}
+  }
+}

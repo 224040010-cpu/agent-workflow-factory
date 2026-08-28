@@ -11,9 +11,10 @@ import platform
 import re
 from typing import Any, Callable, Protocol
 
+from .package_integrity import verify_package_manifest
 from .reference_runtime import ReferenceRuntime, deep_merge, evaluate_expression, fact_value
 from .runtime_contracts import RuntimeCapabilities, negotiate
-from .signing import verify_artifact
+from .signing import verify_artifact, verify_trust_store
 from .util import read_json
 
 
@@ -92,6 +93,8 @@ class DeepSeekHarnessSettings:
 @dataclass(frozen=True)
 class DeepSeekTrustPolicy:
     trust_store: Path
+    trust_store_signature: Path
+    trust_root_public_key: Path
     binding_manifest: Path
     binding_signature: Path
     binding_publisher: str = "agent-workflow-factory-adapter-maintainers"
@@ -773,8 +776,13 @@ class DeepSeekReadonlyRunner:
 
     def _verify_signatures(self) -> list[dict]:
         if self.trust_policy is None:
-            raise ValueError("DeepSeek v0.8 requires an artifact trust policy")
+            raise ValueError("DeepSeek v0.9 requires a rooted artifact trust policy")
         policy = self.trust_policy
+        trust_report = verify_trust_store(
+            policy.trust_store,
+            policy.trust_store_signature,
+            policy.trust_root_public_key,
+        )
         binding_report = verify_artifact(
             policy.binding_manifest,
             policy.binding_signature,
@@ -799,7 +807,12 @@ class DeepSeekReadonlyRunner:
             policy.trust_store,
             policy.registry_publisher,
         )
-        return [binding_report, registry_report]
+        package_report = verify_package_manifest(
+            self.runtime.package_dir,
+            policy.trust_store,
+            policy.registry_publisher,
+        )
+        return [trust_report, binding_report, registry_report, package_report]
 
     def _verify_capabilities(self) -> None:
         required = self.runtime.policy["spec"]["runtime_requirements"]

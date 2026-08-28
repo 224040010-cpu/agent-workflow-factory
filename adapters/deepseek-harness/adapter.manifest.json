@@ -39,10 +39,16 @@
     "per-agent-and-node-budget-accounting",
     "ed25519-binding-manifest-signature",
     "ed25519-registry-lock-signature",
-    "trusted-publisher-key-status"
+    "trusted-publisher-key-status",
+    "root-signed-trust-store",
+    "signed-complete-package-manifest",
+    "reject-missing-modified-or-injected-package-files",
+    "pluggable-signing-provider"
   ],
   "host_binding_manifest": "readonly-tool-bindings.json",
   "host_binding_signature": "readonly-tool-bindings.sig.json",
   "trust_store": "../../trust/trusted-publishers.json",
+  "trust_store_signature": "../../trust/trusted-publishers.sig.json",
+  "trust_root_public_key": "../../trust/root-public-key.json",
   "unsupported_behavior": "fail-before-execution-never-silently-drop"
 }

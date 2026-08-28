@@ -11,9 +11,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from workflow_factory.signing import (  # noqa: E402
+    generate_root_key,
     generate_signing_key,
     sign_artifact,
     verify_artifact,
+    verify_trust_store,
 )
 from workflow_factory.util import read_json, write_json  # noqa: E402
 
@@ -124,6 +126,65 @@ class ArtifactSigningTest(unittest.TestCase):
                 self.trust_store,
                 "test-build-publisher",
             )
+
+    def test_signing_key_rotation_accepts_new_and_retired_keys(self) -> None:
+        rotated_private_key = self.root / "publisher-rotated.pem"
+        rotated_signature = self.root / "registry.lock.rotated.sig.json"
+        rotated_record = generate_signing_key(
+            rotated_private_key,
+            self.trust_store,
+            "test-build-publisher",
+        )
+        trust = read_json(self.trust_store)
+        for record in trust["keys"]:
+            if record["key_id"] == self.record["key_id"]:
+                record["status"] = "retired"
+        write_json(self.trust_store, trust)
+        sign_artifact(
+            self.artifact,
+            rotated_private_key,
+            rotated_signature,
+            "test-build-publisher",
+        )
+
+        old_report = verify_artifact(
+            self.artifact,
+            self.signature,
+            self.trust_store,
+            "test-build-publisher",
+        )
+        new_report = verify_artifact(
+            self.artifact,
+            rotated_signature,
+            self.trust_store,
+            "test-build-publisher",
+        )
+        self.assertEqual(old_report["key_status"], "retired")
+        self.assertEqual(new_report["key_status"], "active")
+        self.assertEqual(new_report["key_id"], rotated_record["key_id"])
+
+    def test_root_signature_protects_trust_store(self) -> None:
+        root_private = self.root / "root.pem"
+        root_public = self.root / "root-public.json"
+        trust_signature = self.root / "trust.sig.json"
+        generate_root_key(root_private, root_public)
+        sign_artifact(
+            self.trust_store,
+            root_private,
+            trust_signature,
+            "agent-workflow-factory-trust-root",
+        )
+        self.assertEqual(
+            verify_trust_store(
+                self.trust_store, trust_signature, root_public
+            )["key_status"],
+            "root",
+        )
+        trust = read_json(self.trust_store)
+        trust["keys"][0]["status"] = "revoked"
+        write_json(self.trust_store, trust)
+        with self.assertRaisesRegex(ValueError, "digest does not match"):
+            verify_trust_store(self.trust_store, trust_signature, root_public)
 
 
 if __name__ == "__main__":

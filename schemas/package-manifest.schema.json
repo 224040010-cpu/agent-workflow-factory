@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow-factory.local/schemas/package-manifest.schema.json",
+  "title": "Signed Agent Workflow Package Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "package_format", "workflow_id", "workflow_version", "artifacts"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "package_format": {"const": "agent-workflow-factory/v0.9"},
+    "workflow_id": {"type": "string", "minLength": 1},
+    "workflow_version": {"type": "string", "minLength": 1},
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "digest", "size", "media_type"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "size": {"type": "integer", "minimum": 0},
+          "media_type": {"enum": ["application/json", "application/xml"]}
+        }
+      }
+    }
+  }
+}

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -23,6 +23,27 @@ ALGORITHM = "Ed25519"
 CANONICALIZATION = "AWF-CANONICAL-JSON-v1"
 TRUSTED_KEY_STATUSES = {"active", "retired"}
 KNOWN_KEY_STATUSES = TRUSTED_KEY_STATUSES | {"revoked"}
+
+
+class SigningProvider(Protocol):
+    """Provider boundary for file keys today and KMS/HSM implementations later."""
+
+    @property
+    def key_id(self) -> str: ...
+
+    def sign(self, payload: bytes) -> bytes: ...
+
+
+class FileEd25519SigningProvider:
+    def __init__(self, private_key_path: Path):
+        self._private_key = load_private_key(private_key_path)
+
+    @property
+    def key_id(self) -> str:
+        return key_id(self._private_key.public_key())
+
+    def sign(self, payload: bytes) -> bytes:
+        return self._private_key.sign(payload)
 
 
 def canonical_json(value: Any) -> bytes:
@@ -110,6 +131,39 @@ def generate_signing_key(
     return copy.deepcopy(record)
 
 
+def generate_root_key(
+    private_key_path: Path,
+    public_key_path: Path,
+    publisher: str = "agent-workflow-factory-trust-root",
+) -> dict:
+    if private_key_path.exists() or public_key_path.exists():
+        raise ValueError("Refusing to overwrite trust root key material")
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key()
+    record = {
+        "schema_version": "1.0.0",
+        "key_id": key_id(public_key),
+        "publisher": publisher,
+        "algorithm": ALGORITHM,
+        "status": "active",
+        "public_key": _b64encode(_public_bytes(public_key)),
+    }
+    private_key_path.parent.mkdir(parents=True, exist_ok=True)
+    private_key_path.write_bytes(
+        private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    try:
+        private_key_path.chmod(0o600)
+    except OSError:
+        pass
+    write_json(public_key_path, record)
+    return copy.deepcopy(record)
+
+
 def load_private_key(path: Path) -> Ed25519PrivateKey:
     key = serialization.load_pem_private_key(path.read_bytes(), password=None)
     if not isinstance(key, Ed25519PrivateKey):
@@ -124,9 +178,24 @@ def sign_artifact(
     publisher: str,
     issued_at: str | None = None,
 ) -> dict:
+    return sign_artifact_with_provider(
+        artifact_path,
+        FileEd25519SigningProvider(private_key_path),
+        signature_path,
+        publisher,
+        issued_at,
+    )
+
+
+def sign_artifact_with_provider(
+    artifact_path: Path,
+    provider: SigningProvider,
+    signature_path: Path,
+    publisher: str,
+    issued_at: str | None = None,
+) -> dict:
     if not artifact_path.is_file():
         raise ValueError(f"Artifact does not exist: {artifact_path}")
-    private_key = load_private_key(private_key_path)
     statement = {
         "schema_version": "1.0.0",
         "subject": {
@@ -135,14 +204,14 @@ def sign_artifact(
             "media_type": "application/json",
         },
         "publisher": publisher,
-        "key_id": key_id(private_key.public_key()),
+        "key_id": provider.key_id,
         "algorithm": ALGORITHM,
         "canonicalization": CANONICALIZATION,
         "issued_at": issued_at or datetime.now(timezone.utc).isoformat(),
     }
     envelope = {
         "statement": statement,
-        "signature": _b64encode(private_key.sign(canonical_json(statement))),
+        "signature": _b64encode(provider.sign(canonical_json(statement))),
     }
     write_json(signature_path, envelope)
     return copy.deepcopy(envelope)
@@ -176,11 +245,27 @@ def _trusted_key(trust_store: dict, wanted_key_id: str, publisher: str) -> Ed255
     return public_key
 
 
-def verify_artifact(
+def _key_from_record(record: dict, expected_publisher: str) -> Ed25519PublicKey:
+    if record.get("schema_version") != "1.0.0":
+        raise ValueError("Unsupported root key schema_version")
+    if record.get("publisher") != expected_publisher:
+        raise ValueError("Root key publisher differs from required publisher")
+    if record.get("algorithm") != ALGORITHM or record.get("status") != "active":
+        raise ValueError("Root key must be an active Ed25519 key")
+    raw = _b64decode(record.get("public_key"), "root public key")
+    if len(raw) != 32:
+        raise ValueError("Root Ed25519 public key must be 32 bytes")
+    public_key = Ed25519PublicKey.from_public_bytes(raw)
+    if key_id(public_key) != record.get("key_id"):
+        raise ValueError("Root public key does not match key_id")
+    return public_key
+
+
+def _verify_envelope(
     artifact_path: Path,
     signature_path: Path,
-    trust_store_path: Path,
     expected_publisher: str,
+    public_key_resolver: Any,
 ) -> dict:
     envelope = read_json(signature_path)
     if set(envelope) != {"statement", "signature"}:
@@ -214,9 +299,7 @@ def verify_artifact(
     actual_digest = artifact_digest(artifact_path)
     if subject.get("digest") != actual_digest:
         raise ValueError("Artifact digest does not match signature subject")
-    public_key = _trusted_key(
-        read_json(trust_store_path), statement.get("key_id"), expected_publisher
-    )
+    public_key, key_status = public_key_resolver(statement)
     signature = _b64decode(envelope.get("signature"), "signature")
     if len(signature) != 64:
         raise ValueError("Ed25519 signature must be 64 bytes")
@@ -230,9 +313,48 @@ def verify_artifact(
         "digest": actual_digest,
         "publisher": expected_publisher,
         "key_id": statement["key_id"],
-        "key_status": next(
-            item["status"]
-            for item in read_json(trust_store_path)["keys"]
-            if item["key_id"] == statement["key_id"]
-        ),
+        "key_status": key_status,
     }
+
+
+def verify_artifact(
+    artifact_path: Path,
+    signature_path: Path,
+    trust_store_path: Path,
+    expected_publisher: str,
+) -> dict:
+    trust_store = read_json(trust_store_path)
+
+    def resolve(statement: dict) -> tuple[Ed25519PublicKey, str]:
+        public_key = _trusted_key(
+            trust_store, statement.get("key_id"), expected_publisher
+        )
+        status = next(
+            item["status"]
+            for item in trust_store["keys"]
+            if item["key_id"] == statement["key_id"]
+        )
+        return public_key, status
+
+    return _verify_envelope(
+        artifact_path, signature_path, expected_publisher, resolve
+    )
+
+
+def verify_trust_store(
+    trust_store_path: Path,
+    signature_path: Path,
+    root_public_key_path: Path,
+    expected_publisher: str = "agent-workflow-factory-trust-root",
+) -> dict:
+    record = read_json(root_public_key_path)
+    root_key = _key_from_record(record, expected_publisher)
+
+    def resolve(statement: dict) -> tuple[Ed25519PublicKey, str]:
+        if statement.get("key_id") != record["key_id"]:
+            raise ValueError("Trust store signature does not use configured root key")
+        return root_key, "root"
+
+    return _verify_envelope(
+        trust_store_path, signature_path, expected_publisher, resolve
+    )

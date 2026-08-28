@@ -18,7 +18,11 @@ from workflow_factory.deepseek_harness import (  # noqa: E402
     DeepSeekReadonlyRunner,
     DeepSeekTrustPolicy,
 )
-from workflow_factory.signing import generate_signing_key  # noqa: E402
+from workflow_factory.signing import (  # noqa: E402
+    generate_root_key,
+    generate_signing_key,
+    sign_artifact,
+)
 from workflow_factory.util import read_json  # noqa: E402
 from workflow_factory.validator import validate_package  # noqa: E402
 
@@ -60,8 +64,20 @@ def main() -> None:
     generate_signing_key(
         private_key, trust_store, "agent-workflow-factory-build"
     )
+    root_private = BUILD / "test-root-key.pem"
+    root_public = BUILD / "test-root-public.json"
+    trust_signature = BUILD / "trusted-publishers.sig.json"
+    generate_root_key(root_private, root_public)
+    sign_artifact(
+        trust_store,
+        root_private,
+        trust_signature,
+        "agent-workflow-factory-trust-root",
+    )
     trust_policy = DeepSeekTrustPolicy(
         trust_store=trust_store,
+        trust_store_signature=trust_signature,
+        trust_root_public_key=root_public,
         binding_manifest=ROOT / "adapters/deepseek-harness/readonly-tool-bindings.json",
         binding_signature=(
             ROOT / "adapters/deepseek-harness/readonly-tool-bindings.sig.json"
@@ -80,7 +96,13 @@ def main() -> None:
         signing_key_path=private_key,
     )
     errors = validate_package(
-        package, trust_store=trust_store, require_registry_signature=True
+        package,
+        trust_store=trust_store,
+        require_registry_signature=True,
+        require_package_signature=True,
+        trust_store_signature=trust_signature,
+        trust_root_public_key=root_public,
+        require_trust_root=True,
     )
     if errors:
         raise RuntimeError(f"DeepSeek MVP package validation failed: {errors}")

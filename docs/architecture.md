@@ -15,7 +15,8 @@ skill-registory
                               v
 agent-workflow-factory
   业务需求 → BPMN → IR → 解析能力目录
-                         → registry.lock.json
+                         → registry.lock.json + signature
+                         → package.manifest.json + signature
                          → graph + agents + loops + policy
                          → 适配器软件包
 ```
