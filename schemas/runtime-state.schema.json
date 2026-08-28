@@ -6,7 +6,8 @@
   "additionalProperties": false,
   "required": [
     "run_id", "workflow_id", "workflow_version", "catalog_digest", "status",
-    "current_node", "facts", "completed_nodes", "loop_rounds", "paused_from_status", "state_version"
+    "current_node", "facts", "completed_nodes", "loop_rounds", "budget_usage",
+    "paused_from_status", "state_version"
   ],
   "properties": {
     "run_id": {"type": "string", "minLength": 1},
@@ -20,10 +21,38 @@
     "facts": {"type": "object"},
     "completed_nodes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
     "loop_rounds": {"type": "integer", "minimum": 0},
+    "budget_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "by_agent", "by_node"],
+      "properties": {
+        "total": {"$ref": "#/$defs/usage"},
+        "by_agent": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/usage"}
+        },
+        "by_node": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/usage"}
+        }
+      }
+    },
     "paused_from_status": {
       "type": ["string", "null"],
       "enum": ["running", "waiting_action", "waiting_facts", null]
     },
     "state_version": {"type": "integer", "minimum": 1}
+  },
+  "$defs": {
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_turns", "tokens", "tool_calls"],
+      "properties": {
+        "model_turns": {"type": "integer", "minimum": 0},
+        "tokens": {"type": "integer", "minimum": 0},
+        "tool_calls": {"type": "integer", "minimum": 0}
+      }
+    }
   }
 }

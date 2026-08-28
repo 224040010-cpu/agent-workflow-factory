@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import json
 import os
@@ -17,10 +18,15 @@ sys.path.insert(0, str(ROOT / "src"))
 from workflow_factory.business import generate_bpmn  # noqa: E402
 from workflow_factory.compiler import compile_package  # noqa: E402
 from workflow_factory.deepseek_harness import (  # noqa: E402
+    BudgetExceeded,
     DeepSeekHarnessSettings,
     DeepSeekReadonlyAdapter,
     DeepSeekReadonlyRunner,
     READONLY_CORDIS_DIGEST,
+    ReadonlyToolHost,
+    binding_digest,
+    builtin_readonly_tool_bindings,
+    harness_usage,
 )
 from workflow_factory.reference_runtime import ReferenceRuntime  # noqa: E402
 from workflow_factory.util import read_json, write_json  # noqa: E402
@@ -33,11 +39,13 @@ class FakeHarnessClient:
         wrong_facts: bool = False,
         wrong_evidence: bool = False,
         fail_on_call: int | None = None,
+        usage: dict | None = None,
     ):
         self.fail_on_call = 1 if fail_once else fail_on_call
         self.failed = False
         self.wrong_facts = wrong_facts
         self.wrong_evidence = wrong_evidence
+        self.usage = usage
         self.calls: list[dict] = []
         self.closed = False
 
@@ -60,7 +68,13 @@ class FakeHarnessClient:
                 ensure_ascii=False,
             ),
             finish_reason="completed",
-            events=[{"type": "assistant/message"}, {"type": "turn/end"}],
+            events=[
+                {
+                    "type": "assistant/message",
+                    "data": {"turn": 0, "step": 0, "usage": self.usage},
+                },
+                {"type": "turn/end"},
+            ],
         )
 
     def close(self) -> None:
@@ -92,6 +106,11 @@ class ErrorHarnessClient:
 
     def close(self) -> None:
         return None
+
+
+def malformed_parse_output(descriptor: dict, request: dict, idempotency_key: str) -> dict:
+    del descriptor, request, idempotency_key
+    return {"facts": {"intent": {"parsed": "yes"}}, "evidence": []}
 
 
 class DeepSeekReadonlyHarnessTest(unittest.TestCase):
@@ -133,10 +152,34 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
         self.assertIn("tool.observation.accepted", event_types)
         self.assertIn("agent.turn.completed", event_types)
         self.assertIn("facts.verified", event_types)
+        self.assertEqual(state := runtime.load_state("run-e2e"), runtime.replay("run-e2e")["state"])
+        self.assertEqual(state["budget_usage"]["total"]["model_turns"], 1)
+        self.assertEqual(state["budget_usage"]["total"]["tool_calls"], 1)
 
     def test_reviewed_cordis_digest_is_pinned(self) -> None:
         cordis = ROOT / "adapters/deepseek-harness/readonly.cordis.yml"
         self.assertEqual(hashlib.sha256(cordis.read_bytes()).hexdigest(), READONLY_CORDIS_DIGEST)
+
+    def test_reviewed_binding_manifest_matches_runtime_bindings(self) -> None:
+        manifest = read_json(
+            ROOT / "adapters/deepseek-harness/readonly-tool-bindings.json"
+        )
+        runtime = builtin_readonly_tool_bindings()
+        self.assertEqual(
+            {item["endpoint"]: item["reviewed_digest"] for item in manifest["bindings"]},
+            {endpoint: binding.reviewed_digest for endpoint, binding in runtime.items()},
+        )
+        for binding in runtime.values():
+            self.assertEqual(
+                binding.reviewed_digest,
+                binding_digest(
+                    binding.endpoint,
+                    binding.implementation_id,
+                    binding.input_schema,
+                    binding.output_schema,
+                    binding.handler,
+                ),
+            )
 
     def test_interrupted_turn_can_resume_with_same_session(self) -> None:
         client = FakeHarnessClient(fail_once=True)
@@ -164,6 +207,129 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
                 DeepSeekReadonlyAdapter(client=client),
             ).run(self.facts, run_id="run-write-rejected")
         self.assertEqual(client.calls, [])
+
+    def test_rejects_tool_input_schema_before_model(self) -> None:
+        client = FakeHarnessClient()
+        with self.assertRaisesRegex(ValueError, "schema rejected.*description"):
+            DeepSeekReadonlyRunner(
+                self.package,
+                self.runtime_dir,
+                DeepSeekReadonlyAdapter(client=client),
+            ).run({"business": {}}, run_id="run-invalid-input")
+        self.assertEqual(client.calls, [])
+
+    def test_rejects_changed_binding_implementation_digest_before_model(self) -> None:
+        bindings = builtin_readonly_tool_bindings()
+        endpoint = "bpmn-tools:parse_business_intent()"
+        bindings[endpoint] = replace(bindings[endpoint], reviewed_digest="sha256:" + "0" * 64)
+        client = FakeHarnessClient()
+        with self.assertRaisesRegex(ValueError, "implementation digest mismatch"):
+            DeepSeekReadonlyRunner(
+                self.package,
+                self.runtime_dir,
+                DeepSeekReadonlyAdapter(tool_host=ReadonlyToolHost(bindings), client=client),
+            ).run(self.facts, run_id="run-binding-digest")
+        self.assertEqual(client.calls, [])
+
+    def test_rejects_tool_output_schema_before_model(self) -> None:
+        bindings = builtin_readonly_tool_bindings()
+        endpoint = "bpmn-tools:parse_business_intent()"
+        original = bindings[endpoint]
+        bindings[endpoint] = replace(
+            original,
+            handler=malformed_parse_output,
+            reviewed_digest=binding_digest(
+                original.endpoint,
+                original.implementation_id,
+                original.input_schema,
+                original.output_schema,
+                malformed_parse_output,
+            ),
+        )
+        client = FakeHarnessClient()
+        with self.assertRaisesRegex(ValueError, "schema rejected.*parsed"):
+            DeepSeekReadonlyRunner(
+                self.package,
+                self.runtime_dir,
+                DeepSeekReadonlyAdapter(tool_host=ReadonlyToolHost(bindings), client=client),
+            ).run(self.facts, run_id="run-invalid-output")
+        self.assertEqual(client.calls, [])
+
+    def test_agent_turn_budget_exhausts_before_model_call(self) -> None:
+        profile_path = next((self.package / "agents").glob("*.agent.json"))
+        profile = read_json(profile_path)
+        profile["spec"]["budgets"]["max_turns"] = 0
+        write_json(profile_path, profile)
+        client = FakeHarnessClient()
+        runner = DeepSeekReadonlyRunner(
+            self.package, self.runtime_dir, DeepSeekReadonlyAdapter(client=client)
+        )
+        with self.assertRaisesRegex(BudgetExceeded, "before execution"):
+            runner.run(self.facts, run_id="run-turn-budget")
+        self.assertEqual(client.calls, [])
+        state = runner.runtime.load_state("run-turn-budget")
+        self.assertEqual(state["status"], "escalated")
+        self.assertEqual(state["budget_usage"]["total"]["model_turns"], 0)
+
+    def test_actual_token_usage_is_recorded_then_escalated(self) -> None:
+        profile_path = next((self.package / "agents").glob("*.agent.json"))
+        profile = read_json(profile_path)
+        profile["spec"]["budgets"]["max_tokens"] = 5
+        write_json(profile_path, profile)
+        client = FakeHarnessClient(
+            usage={
+                "inputTokens": 3,
+                "outputTokens": 2,
+                "cacheReadTokens": 2,
+                "reasoningTokens": 1,
+            }
+        )
+        runner = DeepSeekReadonlyRunner(
+            self.package, self.runtime_dir, DeepSeekReadonlyAdapter(client=client)
+        )
+        with self.assertRaisesRegex(BudgetExceeded, "after provider usage"):
+            runner.run(self.facts, run_id="run-token-budget")
+        state = runner.runtime.load_state("run-token-budget")
+        self.assertEqual(state["status"], "escalated")
+        self.assertEqual(state["budget_usage"]["total"]["tokens"], 7)
+        self.assertNotIn("intent", state["facts"])
+        self.assertEqual(runner.runtime.replay("run-token-budget")["result"], "PASS")
+        self.assertIn(
+            "budget.exhausted",
+            [event["type"] for event in runner.runtime.events.read("run-token-budget")],
+        )
+
+    def test_usage_chunk_overrides_message_and_reasoning_is_not_double_counted(self) -> None:
+        usage = harness_usage(
+            [
+                {
+                    "type": "assistant/message",
+                    "data": {
+                        "turn": 1,
+                        "step": 2,
+                        "usage": {"inputTokens": 100, "outputTokens": 100},
+                    },
+                },
+                {
+                    "type": "assistant/chunk",
+                    "data": {
+                        "turn": 1,
+                        "step": 2,
+                        "chunk": {
+                            "type": "usage",
+                            "usage": {
+                                "inputTokens": 3,
+                                "outputTokens": 5,
+                                "cacheWriteTokens": 2,
+                                "reasoningTokens": 4,
+                            },
+                        },
+                    },
+                },
+            ]
+        )
+        self.assertEqual(usage.total_tokens, 10)
+        self.assertEqual(usage.reasoning_tokens, 4)
 
     def test_rejects_model_facts_that_differ_from_tool_evidence(self) -> None:
         client = FakeHarnessClient(wrong_facts=True)

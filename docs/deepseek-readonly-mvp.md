@@ -111,10 +111,10 @@ python scripts/workflowctl.py run \
 
 ## 下一阶段
 
-其中“增加第二个只读 Tool 和多节点 Graph”已在 v0.6.0 完成，详见 [`deepseek-readonly-multinode.md`](deepseek-readonly-multinode.md)。后续继续推进：
+其中“增加第二个只读 Tool 和多节点 Graph”已在 v0.6.0 完成；Tool Binding Schema、实现摘要和预算治理已在 v0.7.0 完成，详见 [`deepseek-readonly-multinode.md`](deepseek-readonly-multinode.md) 与 [`deepseek-readonly-v0.7.md`](deepseek-readonly-v0.7.md)。后续继续推进：
 
-1. 为更多 Registry Tool 建立独立、可签名的宿主绑定包；
-2. 将 Tool 输入/输出升级为按 Tool Schema 校验，而不是仅校验通用证据信封；
+1. 为 Tool Binding 清单和 Registry lock 增加发布者签名与验证公钥；
+2. 将预算上限下推为 Provider 的单回合输出限制；
 3. 增加 Linux CI 的真实 SDK 夜间冒烟与兼容性矩阵；
 4. 实现人工审批 Provider 后再开放 `human_gate`；
 5. 实现带租约的生产事件存储和调度器后再开放 looping engineering；

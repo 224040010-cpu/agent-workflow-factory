@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0.0",
+  "adapter_id": "deepseek-harness",
+  "mode": "readonly",
+  "digest_algorithm": "sha256(canonical-json(endpoint,implementation_id,input_schema,output_schema,implementation_source_sha256))",
+  "bindings": [
+    {
+      "tool_ref": "parse-business-intent@1.0.0",
+      "endpoint": "bpmn-tools:parse_business_intent()",
+      "implementation_id": "python:workflow_factory._parse_business_intent@v1",
+      "input_schema_symbol": "PARSE_INTENT_INPUT_SCHEMA",
+      "output_schema_symbol": "PARSE_INTENT_OUTPUT_SCHEMA",
+      "reviewed_digest": "sha256:efc8a2efeb0c207bceeedf538dc50d7f3346123a08e48f8d84db46a86db06df5"
+    },
+    {
+      "tool_ref": "detect-description-ambiguity@1.0.0",
+      "endpoint": "bpmn-tools:detect_description_ambiguity()",
+      "implementation_id": "python:workflow_factory._detect_description_ambiguity@v1",
+      "input_schema_symbol": "AMBIGUITY_INPUT_SCHEMA",
+      "output_schema_symbol": "AMBIGUITY_OUTPUT_SCHEMA",
+      "reviewed_digest": "sha256:0e9faa95a11ddb6d2c87e1a1dc4074da7d903754ffef2e4128ddbdad2b4d0e5d"
+    }
+  ]
+}

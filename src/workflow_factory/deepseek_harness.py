@@ -4,6 +4,7 @@ import copy
 from dataclasses import dataclass
 import hashlib
 from importlib.metadata import PackageNotFoundError, version
+import inspect
 import json
 from pathlib import Path
 import platform
@@ -31,6 +32,50 @@ class HarnessClient(Protocol):
 ToolHandler = Callable[[dict, dict, str], dict]
 
 
+class BudgetExceeded(RuntimeError):
+    """Raised after the runtime has durably recorded a budget exhaustion."""
+
+
+@dataclass(frozen=True)
+class ToolBinding:
+    endpoint: str
+    implementation_id: str
+    input_schema: dict
+    output_schema: dict
+    handler: ToolHandler
+    reviewed_digest: str
+
+
+@dataclass(frozen=True)
+class HarnessUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        # DeepSeek reports reasoning tokens inside outputTokens. Cache token fields are
+        # disjoint from inputTokens, so they are included in the governed total.
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_read_tokens
+            + self.cache_write_tokens
+        )
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
+            "total_tokens": self.total_tokens,
+        }
+
+
 @dataclass(frozen=True)
 class DeepSeekHarnessSettings:
     provider: str = "deepseek-official"
@@ -49,6 +94,7 @@ class ToolObservation:
     facts: dict
     evidence: list[dict]
     output_digest: str
+    binding_digest: str
 
 
 @dataclass(frozen=True)
@@ -60,6 +106,7 @@ class HarnessNodeResult:
     response_digest: str
     harness_event_types: list[str]
     tool_observation: ToolObservation
+    usage: HarnessUsage
 
 
 class OfficialDeepSeekHarnessClient:
@@ -124,11 +171,83 @@ class OfficialDeepSeekHarnessClient:
         self._harness.close()
 
 
-class ReadonlyToolHost:
-    """Executes only explicit, pinned and retry-safe host tool bindings."""
+def _json_type_matches(value: Any, expected: str) -> bool:
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "null":
+        return value is None
+    raise ValueError(f"Unsupported binding schema type: {expected}")
 
-    def __init__(self, handlers: dict[str, ToolHandler] | None = None):
-        self.handlers = handlers or builtin_readonly_tool_handlers()
+
+def validate_binding_schema(value: Any, schema: dict, path: str = "$") -> None:
+    """Validate the deliberately small JSON Schema subset used by v0.7 bindings."""
+
+    expected = schema.get("type")
+    if expected is not None and not _json_type_matches(value, expected):
+        raise ValueError(f"Tool binding schema rejected {path}: expected {expected}")
+    if "const" in schema and value != schema["const"]:
+        raise ValueError(f"Tool binding schema rejected {path}: expected const value")
+    if "enum" in schema and value not in schema["enum"]:
+        raise ValueError(f"Tool binding schema rejected {path}: value is not allowed")
+    if isinstance(value, str) and len(value) < schema.get("minLength", 0):
+        raise ValueError(f"Tool binding schema rejected {path}: string is too short")
+    if isinstance(value, list):
+        if len(value) < schema.get("minItems", 0):
+            raise ValueError(f"Tool binding schema rejected {path}: array is too short")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(value):
+                validate_binding_schema(item, item_schema, f"{path}[{index}]")
+    if isinstance(value, dict):
+        properties = schema.get("properties", {})
+        for key in schema.get("required", []):
+            if key not in value:
+                raise ValueError(f"Tool binding schema rejected {path}: missing {key}")
+        if schema.get("additionalProperties") is False:
+            extras = sorted(set(value) - set(properties))
+            if extras:
+                raise ValueError(
+                    f"Tool binding schema rejected {path}: unexpected {', '.join(extras)}"
+                )
+        for key, child_schema in properties.items():
+            if key in value:
+                validate_binding_schema(value[key], child_schema, f"{path}.{key}")
+
+
+def binding_digest(
+    endpoint: str,
+    implementation_id: str,
+    input_schema: dict,
+    output_schema: dict,
+    handler: ToolHandler,
+) -> str:
+    source = inspect.getsource(handler).replace("\r\n", "\n")
+    material = {
+        "endpoint": endpoint,
+        "implementation_id": implementation_id,
+        "input_schema": input_schema,
+        "output_schema": output_schema,
+        "implementation_source_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+    }
+    canonical = json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+
+
+class ReadonlyToolHost:
+    """Executes only explicit, schema-checked and digest-pinned host tool bindings."""
+
+    def __init__(self, bindings: dict[str, ToolBinding] | None = None):
+        self.bindings = bindings or builtin_readonly_tool_bindings()
 
     @staticmethod
     def validate_descriptor(descriptor: dict) -> None:
@@ -143,23 +262,37 @@ class ReadonlyToolHost:
         if not str(descriptor.get("digest", "")).startswith("sha256:"):
             raise ValueError(f"Tool has no pinned digest: {descriptor.get('name')}")
 
-    def invoke(self, descriptor: dict, request: dict, idempotency_key: str) -> ToolObservation:
+    def preflight(self, descriptor: dict, request: dict) -> ToolBinding:
         self.validate_descriptor(descriptor)
         endpoint = descriptor.get("endpoint")
-        handler = self.handlers.get(endpoint)
-        if handler is None:
+        binding = self.bindings.get(endpoint)
+        if binding is None:
             raise ValueError(f"No read-only host binding for pinned endpoint: {endpoint}")
-        raw = handler(copy.deepcopy(descriptor), copy.deepcopy(request), idempotency_key)
-        if set(raw) != {"facts", "evidence"}:
-            raise ValueError("Tool binding must return exactly facts and evidence")
-        if not isinstance(raw["facts"], dict) or not isinstance(raw["evidence"], list):
-            raise ValueError("Tool binding returned invalid evidence envelope")
+        actual = binding_digest(
+            binding.endpoint,
+            binding.implementation_id,
+            binding.input_schema,
+            binding.output_schema,
+            binding.handler,
+        )
+        if actual != binding.reviewed_digest:
+            raise ValueError(f"Tool binding implementation digest mismatch: {endpoint}")
+        validate_binding_schema(request, binding.input_schema)
+        return binding
+
+    def invoke(self, descriptor: dict, request: dict, idempotency_key: str) -> ToolObservation:
+        binding = self.preflight(descriptor, request)
+        raw = binding.handler(
+            copy.deepcopy(descriptor), copy.deepcopy(request), idempotency_key
+        )
+        validate_binding_schema(raw, binding.output_schema)
         material = json.dumps(raw, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return ToolObservation(
             tool_name=descriptor["name"],
             facts=raw["facts"],
             evidence=raw["evidence"],
             output_digest=f"sha256:{hashlib.sha256(material.encode('utf-8')).hexdigest()}",
+            binding_digest=binding.reviewed_digest,
         )
 
 
@@ -222,11 +355,122 @@ def _detect_description_ambiguity(
     }
 
 
-def builtin_readonly_tool_handlers() -> dict[str, ToolHandler]:
-    return {
-        "bpmn-tools:parse_business_intent()": _parse_business_intent,
-        "bpmn-tools:detect_description_ambiguity()": _detect_description_ambiguity,
-    }
+_REQUEST_BASE = {
+    "type": "object",
+    "required": ["facts", "node_id"],
+    "additionalProperties": False,
+    "properties": {
+        "node_id": {"type": "string", "minLength": 1},
+        "facts": {
+            "type": "object",
+            "required": ["business"],
+            "properties": {
+                "business": {
+                    "type": "object",
+                    "required": ["description"],
+                    "properties": {
+                        "description": {"type": "string", "minLength": 1},
+                    },
+                }
+            },
+        },
+    },
+}
+
+_EVIDENCE_ITEM = {
+    "type": "object",
+    "required": ["kind", "digest", "idempotency_key"],
+    "properties": {
+        "kind": {"type": "string", "minLength": 1},
+        "digest": {"type": "string", "minLength": 1},
+        "idempotency_key": {"type": "string", "minLength": 1},
+    },
+}
+
+PARSE_INTENT_INPUT_SCHEMA = copy.deepcopy(_REQUEST_BASE)
+PARSE_INTENT_OUTPUT_SCHEMA = {
+    "type": "object",
+    "required": ["facts", "evidence"],
+    "additionalProperties": False,
+    "properties": {
+        "facts": {
+            "type": "object",
+            "required": ["intent"],
+            "additionalProperties": False,
+            "properties": {
+                "intent": {
+                    "type": "object",
+                    "required": ["parsed"],
+                    "additionalProperties": False,
+                    "properties": {"parsed": {"type": "boolean", "const": True}},
+                }
+            },
+        },
+        "evidence": {"type": "array", "minItems": 1, "items": _EVIDENCE_ITEM},
+    },
+}
+
+AMBIGUITY_INPUT_SCHEMA = copy.deepcopy(_REQUEST_BASE)
+AMBIGUITY_INPUT_SCHEMA["properties"]["facts"]["required"].append("intent")
+AMBIGUITY_INPUT_SCHEMA["properties"]["facts"]["properties"]["intent"] = {
+    "type": "object",
+    "required": ["parsed"],
+    "properties": {"parsed": {"type": "boolean", "const": True}},
+}
+AMBIGUITY_OUTPUT_SCHEMA = {
+    "type": "object",
+    "required": ["facts", "evidence"],
+    "additionalProperties": False,
+    "properties": {
+        "facts": {
+            "type": "object",
+            "required": ["analysis"],
+            "additionalProperties": False,
+            "properties": {
+                "analysis": {
+                    "type": "object",
+                    "required": ["ambiguity_checked", "ambiguous", "ambiguity_terms"],
+                    "additionalProperties": False,
+                    "properties": {
+                        "ambiguity_checked": {"type": "boolean", "const": True},
+                        "ambiguous": {"type": "boolean"},
+                        "ambiguity_terms": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                }
+            },
+        },
+        "evidence": {"type": "array", "minItems": 1, "items": _EVIDENCE_ITEM},
+    },
+}
+
+
+def builtin_readonly_tool_bindings() -> dict[str, ToolBinding]:
+    bindings = [
+        ToolBinding(
+            endpoint="bpmn-tools:parse_business_intent()",
+            implementation_id="python:workflow_factory._parse_business_intent@v1",
+            input_schema=PARSE_INTENT_INPUT_SCHEMA,
+            output_schema=PARSE_INTENT_OUTPUT_SCHEMA,
+            handler=_parse_business_intent,
+            reviewed_digest=(
+                "sha256:efc8a2efeb0c207bceeedf538dc50d7f3346123a08e48f8d84db46a86db06df5"
+            ),
+        ),
+        ToolBinding(
+            endpoint="bpmn-tools:detect_description_ambiguity()",
+            implementation_id="python:workflow_factory._detect_description_ambiguity@v1",
+            input_schema=AMBIGUITY_INPUT_SCHEMA,
+            output_schema=AMBIGUITY_OUTPUT_SCHEMA,
+            handler=_detect_description_ambiguity,
+            reviewed_digest=(
+                "sha256:0e9faa95a11ddb6d2c87e1a1dc4074da7d903754ffef2e4128ddbdad2b4d0e5d"
+            ),
+        ),
+    ]
+    return {binding.endpoint: binding for binding in bindings}
 
 
 def _strict_model_envelope(raw: str) -> dict:
@@ -253,6 +497,70 @@ def _event_types(events: list[Any]) -> list[str]:
         if isinstance(event, dict) and isinstance(event.get("type"), str):
             values.append(event["type"])
     return values
+
+
+def _token_usage(raw: Any) -> HarnessUsage | None:
+    if not isinstance(raw, dict):
+        return None
+    fields = {
+        "input_tokens": raw.get("inputTokens", 0),
+        "output_tokens": raw.get("outputTokens", 0),
+        "cache_read_tokens": raw.get("cacheReadTokens", 0),
+        "cache_write_tokens": raw.get("cacheWriteTokens", 0),
+        "reasoning_tokens": raw.get("reasoningTokens", 0),
+    }
+    if not any(
+        key in raw
+        for key in (
+            "inputTokens",
+            "outputTokens",
+            "cacheReadTokens",
+            "cacheWriteTokens",
+            "reasoningTokens",
+        )
+    ):
+        return None
+    if not all(isinstance(value, int) and value >= 0 for value in fields.values()):
+        raise ValueError("Harness token usage must contain non-negative integers")
+    return HarnessUsage(**fields)
+
+
+def harness_usage(events: list[Any]) -> HarnessUsage:
+    """Aggregate official usage chunks, falling back to assistant messages per step."""
+
+    message_usage: dict[tuple[Any, Any], HarnessUsage] = {}
+    chunk_usage: dict[tuple[Any, Any], HarnessUsage] = {}
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        key = (data.get("turn", 0), data.get("step", index))
+        if event.get("type") == "assistant/message":
+            usage = _token_usage(data.get("usage"))
+            if usage is not None:
+                message_usage[key] = usage
+        elif event.get("type") == "assistant/chunk":
+            chunk = data.get("chunk", data)
+            if isinstance(chunk, dict) and chunk.get("type") == "usage":
+                usage = _token_usage(chunk.get("usage", chunk))
+                if usage is not None:
+                    chunk_usage[key] = usage
+    selected = dict(message_usage)
+    selected.update(chunk_usage)
+    totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+    }
+    for usage in selected.values():
+        values = usage.as_dict()
+        for key in totals:
+            totals[key] += values[key]
+    return HarnessUsage(**totals)
 
 
 def _harness_failure(events: list[Any], finish_reason: str | None) -> str:
@@ -347,6 +655,28 @@ class DeepSeekReadonlyAdapter:
         }
         return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
+    def preflight(self, route: dict, state: dict, profile: dict, descriptor: dict) -> None:
+        self._validate_profile(profile, descriptor["name"])
+        self.tool_host.preflight(
+            descriptor,
+            {"facts": state["facts"], "node_id": route["node_id"]},
+        )
+
+    def observe(
+        self,
+        route: dict,
+        state: dict,
+        profile: dict,
+        descriptor: dict,
+        idempotency_key: str,
+    ) -> ToolObservation:
+        self.preflight(route, state, profile, descriptor)
+        return self.tool_host.invoke(
+            descriptor,
+            {"facts": state["facts"], "node_id": route["node_id"]},
+            idempotency_key,
+        )
+
     def execute(
         self,
         route: dict,
@@ -354,12 +684,11 @@ class DeepSeekReadonlyAdapter:
         profile: dict,
         descriptor: dict,
         idempotency_key: str,
+        observation: ToolObservation | None = None,
     ) -> HarnessNodeResult:
-        self._validate_profile(profile, descriptor["name"])
-        observation = self.tool_host.invoke(
-            descriptor,
-            {"facts": state["facts"], "node_id": route["node_id"]},
-            idempotency_key,
+        self.preflight(route, state, profile, descriptor)
+        observation = observation or self.observe(
+            route, state, profile, descriptor, idempotency_key
         )
         session_id = f"{route['run_id']}--{route['node_id']}"
         result = self.client.run(
@@ -371,6 +700,7 @@ class DeepSeekReadonlyAdapter:
             raise ValueError("Harness result has no final_response")
         events = getattr(result, "events", [])
         events = events if isinstance(events, list) else []
+        usage = harness_usage(events)
         finish_reason = getattr(result, "finish_reason", None)
         if finish_reason not in {None, "completed"}:
             raise RuntimeError(_harness_failure(events, finish_reason))
@@ -404,6 +734,7 @@ class DeepSeekReadonlyAdapter:
             ),
             harness_event_types=_event_types(events),
             tool_observation=observation,
+            usage=usage,
         )
 
 
@@ -431,7 +762,7 @@ class DeepSeekReadonlyRunner:
                 "DeepSeek read-only adapter lacks required capabilities: " + ", ".join(missing)
             )
 
-    def _execute_route(self, route: dict, state: dict) -> HarnessNodeResult:
+    def _execution_context(self, route: dict, state: dict) -> tuple[str, dict, dict, str]:
         action = route["action"]
         if action.get("kind") not in {"agent_task", "tool_task"}:
             raise ValueError(f"Read-only MVP cannot execute action kind: {action.get('kind')}")
@@ -442,13 +773,7 @@ class DeepSeekReadonlyRunner:
         if not tool_ref or tool_ref not in self.tools:
             raise ValueError(f"No pinned read-only tool for node: {route['node_id']}")
         key = f"{route['run_id']}:{route['node_id']}:{state['loop_rounds']}"
-        return self.adapter.execute(
-            route,
-            state,
-            self.profiles[agent_ref],
-            self.tools[tool_ref],
-            key,
-        )
+        return agent_ref, self.profiles[agent_ref], self.tools[tool_ref], key
 
     def run(
         self,
@@ -477,6 +802,7 @@ class DeepSeekReadonlyRunner:
                 route = self.runtime.route(run_id).as_dict()
                 if route["status"] == "completed":
                     replay = self.runtime.replay(run_id)
+                    final_state = self.runtime.load_state(run_id)
                     return {
                         "result": "PASS" if replay["result"] == "PASS" else "FAIL",
                         "adapter": "deepseek-harness",
@@ -486,11 +812,76 @@ class DeepSeekReadonlyRunner:
                         "completed_actions": completed,
                         "replay": replay["result"],
                         "events": replay["events"],
+                        "budget_usage": final_state["budget_usage"],
                     }
                 if route["status"] != "waiting_action":
                     raise ValueError(f"Runtime cannot progress automatically: {route['status']}")
                 state = self.runtime.load_state(run_id)
-                result = self._execute_route(route, state)
+                agent_ref, profile, descriptor, key = self._execution_context(route, state)
+                self.adapter.preflight(route, state, profile, descriptor)
+                limits = profile["spec"]["budgets"]
+                tool_delta = {"model_turns": 0, "tokens": 0, "tool_calls": 1}
+                exceeded = self.runtime.budget_excess(state, agent_ref, tool_delta, limits)
+                if exceeded:
+                    self.runtime.exhaust_budget(
+                        run_id, route["node_id"], agent_ref, tool_delta, limits, exceeded
+                    )
+                    raise BudgetExceeded(
+                        "Agent budget exhausted before execution: " + ", ".join(exceeded)
+                    )
+                self.runtime.record_budget(
+                    run_id,
+                    route["node_id"],
+                    agent_ref,
+                    tool_delta,
+                    limits,
+                    "tool-attempt",
+                )
+                state = self.runtime.load_state(run_id)
+                observation = self.adapter.observe(
+                    route, state, profile, descriptor, key
+                )
+                turn_delta = {"model_turns": 1, "tokens": 0, "tool_calls": 0}
+                exceeded = self.runtime.budget_excess(state, agent_ref, turn_delta, limits)
+                if exceeded:
+                    self.runtime.exhaust_budget(
+                        run_id, route["node_id"], agent_ref, turn_delta, limits, exceeded
+                    )
+                    raise BudgetExceeded(
+                        "Agent budget exhausted before execution: " + ", ".join(exceeded)
+                    )
+                self.runtime.record_budget(
+                    run_id,
+                    route["node_id"],
+                    agent_ref,
+                    turn_delta,
+                    limits,
+                    "model-turn-attempt",
+                )
+                state = self.runtime.load_state(run_id)
+                result = self.adapter.execute(
+                    route, state, profile, descriptor, key, observation
+                )
+                token_delta = {
+                    "model_turns": 0,
+                    "tokens": result.usage.total_tokens,
+                    "tool_calls": 0,
+                }
+                _, exceeded = self.runtime.record_budget(
+                    run_id,
+                    route["node_id"],
+                    agent_ref,
+                    token_delta,
+                    limits,
+                    "provider-usage",
+                )
+                if exceeded:
+                    self.runtime.exhaust_budget(
+                        run_id, route["node_id"], agent_ref, token_delta, limits, exceeded
+                    )
+                    raise BudgetExceeded(
+                        "Agent budget exhausted after provider usage: " + ", ".join(exceeded)
+                    )
                 self.runtime.events.append(
                     run_id,
                     "tool.observation.accepted",
@@ -498,6 +889,7 @@ class DeepSeekReadonlyRunner:
                         "node_id": route["node_id"],
                         "tool": result.tool_observation.tool_name,
                         "output_digest": result.tool_observation.output_digest,
+                        "binding_digest": result.tool_observation.binding_digest,
                     },
                 )
                 self.runtime.events.append(
@@ -509,6 +901,7 @@ class DeepSeekReadonlyRunner:
                         "finish_reason": result.finish_reason,
                         "response_digest": result.response_digest,
                         "harness_event_types": result.harness_event_types,
+                        "usage": result.usage.as_dict(),
                     },
                 )
                 self.runtime.events.append(

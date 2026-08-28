@@ -17,6 +17,11 @@ EXPRESSION = re.compile(
     r"^facts\.([A-Za-z0-9_.-]+)\s*(==|!=|>=|<=|>|<)\s*"
     r"(true|false|null|-?\d+(?:\.\d+)?|'[^']*'|\"[^\"]*\")$"
 )
+BUDGET_LIMIT_KEYS = {
+    "model_turns": "max_turns",
+    "tokens": "max_tokens",
+    "tool_calls": "max_tool_calls",
+}
 
 
 def deep_merge(target: dict, updates: dict) -> dict:
@@ -117,7 +122,9 @@ class JsonlEventStore:
                 errors.append(f"event prev_hash mismatch at {expected_seq}")
             supplied_hash = event.get("event_hash")
             material = {key: value for key, value in event.items() if key != "event_hash"}
-            canonical = json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            canonical = json.dumps(
+                material, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
             actual_hash = f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
             if supplied_hash != actual_hash:
                 errors.append(f"event hash mismatch at {expected_seq}")
@@ -190,10 +197,98 @@ class ReferenceRuntime:
             "facts": copy.deepcopy(initial_facts or {}),
             "completed_nodes": [],
             "loop_rounds": 0,
+            "budget_usage": {
+                "total": {"model_turns": 0, "tokens": 0, "tool_calls": 0},
+                "by_agent": {},
+                "by_node": {},
+            },
             "paused_from_status": None,
             "state_version": 0,
         }
         self.persist(state, "run.started", {"workflow_id": state["workflow_id"]})
+        return state
+
+    @staticmethod
+    def budget_excess(
+        state: dict,
+        agent_id: str,
+        delta: dict[str, int],
+        limits: dict[str, int],
+    ) -> list[str]:
+        current = state["budget_usage"]["by_agent"].get(
+            agent_id, {"model_turns": 0, "tokens": 0, "tool_calls": 0}
+        )
+        exceeded: list[str] = []
+        for usage_key, limit_key in BUDGET_LIMIT_KEYS.items():
+            amount = delta.get(usage_key, 0)
+            limit = limits.get(limit_key)
+            if not isinstance(amount, int) or amount < 0:
+                raise ValueError(f"Invalid budget delta: {usage_key}")
+            if not isinstance(limit, int) or limit < 0:
+                raise ValueError(f"Invalid Agent budget: {limit_key}")
+            if current.get(usage_key, 0) + amount > limit:
+                exceeded.append(limit_key)
+        return exceeded
+
+    def record_budget(
+        self,
+        run_id: str,
+        node_id: str,
+        agent_id: str,
+        delta: dict[str, int],
+        limits: dict[str, int],
+        phase: str,
+    ) -> tuple[dict, list[str]]:
+        state = self.load_state(run_id)
+        exceeded = self.budget_excess(state, agent_id, delta, limits)
+        usage = state["budget_usage"]
+        empty = {"model_turns": 0, "tokens": 0, "tool_calls": 0}
+        agent_usage = usage["by_agent"].setdefault(agent_id, copy.deepcopy(empty))
+        node_usage = usage["by_node"].setdefault(node_id, copy.deepcopy(empty))
+        for key in empty:
+            amount = delta.get(key, 0)
+            usage["total"][key] += amount
+            agent_usage[key] += amount
+            node_usage[key] += amount
+        self.persist(
+            state,
+            "budget.consumed",
+            {
+                "node_id": node_id,
+                "agent_id": agent_id,
+                "phase": phase,
+                "delta": delta,
+                "agent_usage": copy.deepcopy(agent_usage),
+                "limits": limits,
+                "exceeded": exceeded,
+            },
+        )
+        return state, exceeded
+
+    def exhaust_budget(
+        self,
+        run_id: str,
+        node_id: str,
+        agent_id: str,
+        attempted_delta: dict[str, int],
+        limits: dict[str, int],
+        exceeded: list[str],
+    ) -> dict:
+        state = self.load_state(run_id)
+        if state["status"] not in {"completed", "cancelled"}:
+            state["status"] = "escalated"
+        self.persist(
+            state,
+            "budget.exhausted",
+            {
+                "node_id": node_id,
+                "agent_id": agent_id,
+                "attempted_delta": attempted_delta,
+                "limits": limits,
+                "exceeded": exceeded,
+                "action": "escalate",
+            },
+        )
         return state
 
     def select_edge(self, state: dict, node_id: str) -> dict | None:
@@ -324,7 +419,11 @@ class ReferenceRuntime:
     def replay(self, run_id: str) -> dict:
         errors = self.events.verify(run_id)
         events = self.events.read(run_id)
-        checkpoints = [event["payload"]["state"] for event in events if event["type"] == "state.checkpointed"]
+        checkpoints = [
+            event["payload"]["state"]
+            for event in events
+            if event["type"] == "state.checkpointed"
+        ]
         if not checkpoints:
             errors.append("trajectory contains no state checkpoint")
             replayed = None

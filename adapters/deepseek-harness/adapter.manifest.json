@@ -33,11 +33,11 @@
     "idempotent-true",
     "agent-external-write-deny",
     "no-model-facing-tools",
-    "model-facts-equal-trusted-tool-facts"
+    "model-facts-equal-trusted-tool-facts",
+    "tool-binding-input-output-json-schema",
+    "tool-binding-reviewed-implementation-digest",
+    "per-agent-and-node-budget-accounting"
   ],
-  "mvp_host_bindings": [
-    "parse-business-intent@1.0.0",
-    "detect-description-ambiguity@1.0.0"
-  ],
+  "host_binding_manifest": "readonly-tool-bindings.json",
   "unsupported_behavior": "fail-before-execution-never-silently-drop"
 }

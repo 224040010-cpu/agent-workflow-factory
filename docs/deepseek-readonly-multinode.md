@@ -65,7 +65,7 @@ python scripts/run_deepseek_multinode_mvp.py
 - 清晰描述：2 个 Agent、2 个 Tool、2 个动作完成，路由到 `ready`；
 - 模糊描述：识别模糊词并路由到 `needs-clarification`。
 
-两条路径都必须返回 `result=PASS`、`replay=PASS`，当前各产生 27 条哈希链事件。
+两条路径都必须返回 `result=PASS`、`replay=PASS`。v0.7 起轨迹还包含逐阶段预算事件，因此不再把固定事件条数作为兼容契约。
 
 组件测试还验证：
 
@@ -109,4 +109,4 @@ python scripts/workflowctl.py run \
 
 ## 下一阶段边界
 
-完成该阶段后，下一步应增加 Tool 输入/输出 JSON Schema、每节点 token/Tool 调用预算计量，以及对 Registry Tool 绑定包的签名校验。人工审批和定时循环仍应保持关闭，直到对应 Provider 与生产事件存储完成。
+Tool 输入/输出 JSON Schema、每 Agent/节点 Token 与 Tool 调用预算计量、宿主实现摘要已在 v0.7 完成。下一步应增加 Binding 发布者签名和验证公钥，并继续保持人工审批和定时循环关闭，直到对应 Provider 与生产事件存储完成。
