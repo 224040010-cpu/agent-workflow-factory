@@ -17,8 +17,14 @@ from workflow_factory.deepseek_harness import (  # noqa: E402
     DeepSeekHarnessSettings,
     DeepSeekReadonlyAdapter,
     DeepSeekReadonlyRunner,
+    DeepSeekTrustPolicy,
 )
 from workflow_factory.reference_runtime import ReferenceRuntime  # noqa: E402
+from workflow_factory.signing import (  # noqa: E402
+    generate_signing_key,
+    sign_artifact,
+    verify_artifact,
+)
 from workflow_factory.text_pipeline import build_from_business_text  # noqa: E402
 from workflow_factory.util import read_json  # noqa: E402
 from workflow_factory.validator import validate_package  # noqa: E402
@@ -38,8 +44,12 @@ def main() -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     verify = subparsers.add_parser("verify-definition")
-    verify.add_argument("--definition", type=Path, default=ROOT / "contracts/system-definition.json")
-    verify.add_argument("--checksum", type=Path, default=ROOT / "contracts/system-definition.sha256")
+    verify.add_argument(
+        "--definition", type=Path, default=ROOT / "contracts/system-definition.json"
+    )
+    verify.add_argument(
+        "--checksum", type=Path, default=ROOT / "contracts/system-definition.sha256"
+    )
 
     generate = subparsers.add_parser("generate-bpmn")
     generate.add_argument("business", type=Path)
@@ -49,18 +59,49 @@ def main() -> int:
     text_build.add_argument("source", type=Path)
     text_build.add_argument("--workflow-id")
     text_build.add_argument("--catalog", type=Path, default=ROOT / "fixtures/catalog.snapshot.json")
-    text_build.add_argument("--definition", type=Path, default=ROOT / "contracts/system-definition.json")
+    text_build.add_argument(
+        "--definition", type=Path, default=ROOT / "contracts/system-definition.json"
+    )
     text_build.add_argument("--output", type=Path, required=True)
+    text_build.add_argument("--signing-key", type=Path)
+    text_build.add_argument(
+        "--signing-publisher", default="agent-workflow-factory-build"
+    )
 
     compile_command = subparsers.add_parser("compile")
     compile_command.add_argument("bpmn", type=Path)
     compile_command.add_argument("--business", type=Path, required=True)
     compile_command.add_argument("--catalog", type=Path, required=True)
-    compile_command.add_argument("--definition", type=Path, default=ROOT / "contracts/system-definition.json")
+    compile_command.add_argument(
+        "--definition", type=Path, default=ROOT / "contracts/system-definition.json"
+    )
     compile_command.add_argument("--output", type=Path, required=True)
+    compile_command.add_argument("--signing-key", type=Path)
+    compile_command.add_argument(
+        "--signing-publisher", default="agent-workflow-factory-build"
+    )
 
     validate = subparsers.add_parser("validate")
     validate.add_argument("package", type=Path)
+    validate.add_argument("--trust-store", type=Path)
+    validate.add_argument("--require-registry-signature", action="store_true")
+
+    keygen = subparsers.add_parser("keygen")
+    keygen.add_argument("--private-key", type=Path, required=True)
+    keygen.add_argument("--trust-store", type=Path, required=True)
+    keygen.add_argument("--publisher", required=True)
+
+    sign = subparsers.add_parser("sign-artifact")
+    sign.add_argument("artifact", type=Path)
+    sign.add_argument("--private-key", type=Path, required=True)
+    sign.add_argument("--output", type=Path, required=True)
+    sign.add_argument("--publisher", required=True)
+
+    verify_signature = subparsers.add_parser("verify-artifact")
+    verify_signature.add_argument("artifact", type=Path)
+    verify_signature.add_argument("--signature", type=Path, required=True)
+    verify_signature.add_argument("--trust-store", type=Path, required=True)
+    verify_signature.add_argument("--publisher", required=True)
 
     runtime_start = subparsers.add_parser("runtime-start")
     runtime_start.add_argument("package", type=Path)
@@ -111,6 +152,19 @@ def main() -> int:
         type=Path,
         default=ROOT / "adapters/deepseek-harness/readonly.cordis.yml",
     )
+    run_command.add_argument(
+        "--trust-store", type=Path, default=ROOT / "trust/trusted-publishers.json"
+    )
+    run_command.add_argument(
+        "--binding-manifest",
+        type=Path,
+        default=ROOT / "adapters/deepseek-harness/readonly-tool-bindings.json",
+    )
+    run_command.add_argument(
+        "--binding-signature",
+        type=Path,
+        default=ROOT / "adapters/deepseek-harness/readonly-tool-bindings.sig.json",
+    )
 
     args = parser.parse_args()
     try:
@@ -126,6 +180,8 @@ def main() -> int:
                 args.definition,
                 args.output,
                 workflow_id=args.workflow_id,
+                signing_key_path=args.signing_key,
+                signing_publisher=args.signing_publisher,
             )
             print(json.dumps(manifest, ensure_ascii=False, indent=2))
         elif args.command == "compile":
@@ -135,18 +191,45 @@ def main() -> int:
                 args.catalog,
                 args.definition,
                 args.output,
+                signing_key_path=args.signing_key,
+                signing_publisher=args.signing_publisher,
             )
             print(
                 f"Package → {args.output} "
                 f"({report['generated_agents']} agents, {report['resolved_tools']} tools)"
             )
         elif args.command == "validate":
-            errors = validate_package(args.package)
+            errors = validate_package(
+                args.package,
+                trust_store=args.trust_store,
+                require_registry_signature=args.require_registry_signature,
+            )
             if errors:
                 for error in errors:
                     print(f"ERROR: {error}", file=sys.stderr)
                 return 1
             print(f"Package verified: {args.package}")
+        elif args.command == "keygen":
+            record = generate_signing_key(
+                args.private_key, args.trust_store, args.publisher
+            )
+            print(json.dumps(record, ensure_ascii=False, indent=2))
+        elif args.command == "sign-artifact":
+            envelope = sign_artifact(
+                args.artifact,
+                args.private_key,
+                args.output,
+                args.publisher,
+            )
+            print(json.dumps(envelope["statement"], ensure_ascii=False, indent=2))
+        elif args.command == "verify-artifact":
+            report = verify_artifact(
+                args.artifact,
+                args.signature,
+                args.trust_store,
+                args.publisher,
+            )
+            print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.command == "runtime-start":
             runtime = ReferenceRuntime(args.package, args.runtime_dir)
             facts = read_json(args.facts) if args.facts else {}
@@ -187,6 +270,11 @@ def main() -> int:
                     args.package,
                     args.runtime_dir,
                     adapter,
+                    DeepSeekTrustPolicy(
+                        trust_store=args.trust_store,
+                        binding_manifest=args.binding_manifest,
+                        binding_signature=args.binding_signature,
+                    ),
                 ).run(
                     read_json(args.facts) if args.facts else {},
                     run_id=args.run_id,

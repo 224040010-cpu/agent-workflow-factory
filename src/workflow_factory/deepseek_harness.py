@@ -13,6 +13,7 @@ from typing import Any, Callable, Protocol
 
 from .reference_runtime import ReferenceRuntime, deep_merge, evaluate_expression, fact_value
 from .runtime_contracts import RuntimeCapabilities, negotiate
+from .signing import verify_artifact
 from .util import read_json
 
 
@@ -86,6 +87,15 @@ class DeepSeekHarnessSettings:
     cordis: Path | None = None
     base_url: str | None = None
     api_key: str | None = None
+
+
+@dataclass(frozen=True)
+class DeepSeekTrustPolicy:
+    trust_store: Path
+    binding_manifest: Path
+    binding_signature: Path
+    binding_publisher: str = "agent-workflow-factory-adapter-maintainers"
+    registry_publisher: str = "agent-workflow-factory-build"
 
 
 @dataclass(frozen=True)
@@ -741,9 +751,16 @@ class DeepSeekReadonlyAdapter:
 class DeepSeekReadonlyRunner:
     """Runs a compiled package end to end with only read-only, pinned tools."""
 
-    def __init__(self, package_dir: Path, runtime_dir: Path, adapter: DeepSeekReadonlyAdapter):
+    def __init__(
+        self,
+        package_dir: Path,
+        runtime_dir: Path,
+        adapter: DeepSeekReadonlyAdapter,
+        trust_policy: DeepSeekTrustPolicy | None = None,
+    ):
         self.runtime = ReferenceRuntime(package_dir, runtime_dir)
         self.adapter = adapter
+        self.trust_policy = trust_policy
         self.profiles = {
             path.stem.removesuffix(".agent"): read_json(path)
             for path in (package_dir / "agents").glob("*.agent.json")
@@ -753,6 +770,36 @@ class DeepSeekReadonlyRunner:
             for item in self.runtime.lock["resolved_assets"]
             if item.get("type") == "tool"
         }
+
+    def _verify_signatures(self) -> list[dict]:
+        if self.trust_policy is None:
+            raise ValueError("DeepSeek v0.8 requires an artifact trust policy")
+        policy = self.trust_policy
+        binding_report = verify_artifact(
+            policy.binding_manifest,
+            policy.binding_signature,
+            policy.trust_store,
+            policy.binding_publisher,
+        )
+        manifest = read_json(policy.binding_manifest)
+        signed_bindings = {
+            item["endpoint"]: item["reviewed_digest"]
+            for item in manifest.get("bindings", [])
+            if isinstance(item, dict)
+        }
+        runtime_bindings = {
+            endpoint: binding.reviewed_digest
+            for endpoint, binding in self.adapter.tool_host.bindings.items()
+        }
+        if signed_bindings != runtime_bindings:
+            raise ValueError("Signed Tool Binding manifest differs from runtime bindings")
+        registry_report = verify_artifact(
+            self.runtime.package_dir / "registry.lock.json",
+            self.runtime.package_dir / "registry.lock.sig.json",
+            policy.trust_store,
+            policy.registry_publisher,
+        )
+        return [binding_report, registry_report]
 
     def _verify_capabilities(self) -> None:
         required = self.runtime.policy["spec"]["runtime_requirements"]
@@ -781,6 +828,7 @@ class DeepSeekReadonlyRunner:
         run_id: str | None = None,
         max_nodes: int = 100,
     ) -> dict:
+        signature_reports = self._verify_signatures()
         self._verify_capabilities()
         run_id = run_id or "run-deepseek-readonly"
         checkpoint = self.runtime.checkpoint_path(run_id)
@@ -794,6 +842,11 @@ class DeepSeekReadonlyRunner:
                 run_id,
                 "adapter.capabilities.accepted",
                 {"adapter": "deepseek-harness", "mode": "readonly"},
+            )
+            self.runtime.events.append(
+                run_id,
+                "artifact.signatures.accepted",
+                {"artifacts": signature_reports},
             )
 
         completed = 0

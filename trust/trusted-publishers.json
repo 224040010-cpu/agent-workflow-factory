@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "keys": [
+    {
+      "key_id": "sha256:71f60f92d58ec668ad1eadb9cf0842ae2f29b5276dc393e20f6e92c89e509f72",
+      "publisher": "agent-workflow-factory-adapter-maintainers",
+      "algorithm": "Ed25519",
+      "status": "active",
+      "public_key": "RXHiTZjcH+Xt1K955vmFOum/ltQO3m2UZ31pCICB8wQ="
+    }
+  ]
+}

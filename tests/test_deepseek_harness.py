@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import sys
 import tempfile
 import unittest
@@ -22,6 +23,7 @@ from workflow_factory.deepseek_harness import (  # noqa: E402
     DeepSeekHarnessSettings,
     DeepSeekReadonlyAdapter,
     DeepSeekReadonlyRunner,
+    DeepSeekTrustPolicy,
     READONLY_CORDIS_DIGEST,
     ReadonlyToolHost,
     binding_digest,
@@ -29,6 +31,7 @@ from workflow_factory.deepseek_harness import (  # noqa: E402
     harness_usage,
 )
 from workflow_factory.reference_runtime import ReferenceRuntime  # noqa: E402
+from workflow_factory.signing import generate_signing_key, sign_artifact  # noqa: E402
 from workflow_factory.util import read_json, write_json  # noqa: E402
 
 
@@ -113,6 +116,24 @@ def malformed_parse_output(descriptor: dict, request: dict, idempotency_key: str
     return {"facts": {"intent": {"parsed": "yes"}}, "evidence": []}
 
 
+def prepare_test_trust(root: Path) -> tuple[Path, DeepSeekTrustPolicy]:
+    trust_store = root / "trusted-publishers.json"
+    shutil.copyfile(ROOT / "trust/trusted-publishers.json", trust_store)
+    private_key = root / "build-signing-key.pem"
+    generate_signing_key(
+        private_key,
+        trust_store,
+        "agent-workflow-factory-build",
+    )
+    return private_key, DeepSeekTrustPolicy(
+        trust_store=trust_store,
+        binding_manifest=ROOT / "adapters/deepseek-harness/readonly-tool-bindings.json",
+        binding_signature=(
+            ROOT / "adapters/deepseek-harness/readonly-tool-bindings.sig.json"
+        ),
+    )
+
+
 class DeepSeekReadonlyHarnessTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -120,6 +141,7 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
         self.package = self.root / "package"
         self.runtime_dir = self.root / "runtime"
         self.business = ROOT / "examples/deepseek-readonly/business-requirement.json"
+        self.private_key, self.trust_policy = prepare_test_trust(self.root)
         bpmn = self.root / "process.bpmn"
         generate_bpmn(self.business, bpmn)
         compile_package(
@@ -128,16 +150,22 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
             ROOT / "fixtures/catalog.snapshot.json",
             ROOT / "contracts/system-definition.json",
             self.package,
+            signing_key_path=self.private_key,
         )
         self.facts = read_json(ROOT / "examples/deepseek-readonly/initial-facts.json")
 
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    def runner(self, adapter: DeepSeekReadonlyAdapter) -> DeepSeekReadonlyRunner:
+        return DeepSeekReadonlyRunner(
+            self.package, self.runtime_dir, adapter, self.trust_policy
+        )
+
     def test_readonly_end_to_end_reaches_terminal_and_replays(self) -> None:
         client = FakeHarnessClient()
         adapter = DeepSeekReadonlyAdapter(client=client)
-        report = DeepSeekReadonlyRunner(self.package, self.runtime_dir, adapter).run(
+        report = self.runner(adapter).run(
             self.facts,
             run_id="run-e2e",
         )
@@ -152,9 +180,31 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
         self.assertIn("tool.observation.accepted", event_types)
         self.assertIn("agent.turn.completed", event_types)
         self.assertIn("facts.verified", event_types)
+        self.assertIn("artifact.signatures.accepted", event_types)
         self.assertEqual(state := runtime.load_state("run-e2e"), runtime.replay("run-e2e")["state"])
         self.assertEqual(state["budget_usage"]["total"]["model_turns"], 1)
         self.assertEqual(state["budget_usage"]["total"]["tool_calls"], 1)
+
+    def test_requires_trust_policy_before_model(self) -> None:
+        client = FakeHarnessClient()
+        with self.assertRaisesRegex(ValueError, "requires an artifact trust policy"):
+            DeepSeekReadonlyRunner(
+                self.package,
+                self.runtime_dir,
+                DeepSeekReadonlyAdapter(client=client),
+            ).run(self.facts, run_id="run-no-trust")
+        self.assertEqual(client.calls, [])
+
+    def test_rejects_unsigned_registry_lock_tampering_before_model(self) -> None:
+        lock = read_json(self.package / "registry.lock.json")
+        lock["catalog_digest"] = "sha256:" + "0" * 64
+        write_json(self.package / "registry.lock.json", lock)
+        client = FakeHarnessClient()
+        with self.assertRaisesRegex(ValueError, "digest does not match signature subject"):
+            self.runner(DeepSeekReadonlyAdapter(client=client)).run(
+                self.facts, run_id="run-lock-tampered"
+            )
+        self.assertEqual(client.calls, [])
 
     def test_reviewed_cordis_digest_is_pinned(self) -> None:
         cordis = ROOT / "adapters/deepseek-harness/readonly.cordis.yml"
@@ -184,7 +234,7 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
     def test_interrupted_turn_can_resume_with_same_session(self) -> None:
         client = FakeHarnessClient(fail_once=True)
         adapter = DeepSeekReadonlyAdapter(client=client)
-        runner = DeepSeekReadonlyRunner(self.package, self.runtime_dir, adapter)
+        runner = self.runner(adapter)
         with self.assertRaisesRegex(RuntimeError, "injected Harness interruption"):
             runner.run(self.facts, run_id="run-resume")
         self.assertEqual(runner.runtime.load_state("run-resume")["status"], "paused")
@@ -199,23 +249,25 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
         tool = next(item for item in lock["resolved_assets"] if item["type"] == "tool")
         tool["side_effects"] = "write"
         write_json(self.package / "registry.lock.json", lock)
+        sign_artifact(
+            self.package / "registry.lock.json",
+            self.private_key,
+            self.package / "registry.lock.sig.json",
+            "agent-workflow-factory-build",
+        )
         client = FakeHarnessClient()
         with self.assertRaisesRegex(ValueError, "Tool is not read-only"):
-            DeepSeekReadonlyRunner(
-                self.package,
-                self.runtime_dir,
-                DeepSeekReadonlyAdapter(client=client),
-            ).run(self.facts, run_id="run-write-rejected")
+            self.runner(DeepSeekReadonlyAdapter(client=client)).run(
+                self.facts, run_id="run-write-rejected"
+            )
         self.assertEqual(client.calls, [])
 
     def test_rejects_tool_input_schema_before_model(self) -> None:
         client = FakeHarnessClient()
         with self.assertRaisesRegex(ValueError, "schema rejected.*description"):
-            DeepSeekReadonlyRunner(
-                self.package,
-                self.runtime_dir,
-                DeepSeekReadonlyAdapter(client=client),
-            ).run({"business": {}}, run_id="run-invalid-input")
+            self.runner(DeepSeekReadonlyAdapter(client=client)).run(
+                {"business": {}}, run_id="run-invalid-input"
+            )
         self.assertEqual(client.calls, [])
 
     def test_rejects_changed_binding_implementation_digest_before_model(self) -> None:
@@ -223,11 +275,11 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
         endpoint = "bpmn-tools:parse_business_intent()"
         bindings[endpoint] = replace(bindings[endpoint], reviewed_digest="sha256:" + "0" * 64)
         client = FakeHarnessClient()
-        with self.assertRaisesRegex(ValueError, "implementation digest mismatch"):
-            DeepSeekReadonlyRunner(
-                self.package,
-                self.runtime_dir,
-                DeepSeekReadonlyAdapter(tool_host=ReadonlyToolHost(bindings), client=client),
+        with self.assertRaisesRegex(ValueError, "Signed Tool Binding manifest differs"):
+            self.runner(
+                DeepSeekReadonlyAdapter(
+                    tool_host=ReadonlyToolHost(bindings), client=client
+                )
             ).run(self.facts, run_id="run-binding-digest")
         self.assertEqual(client.calls, [])
 
@@ -246,14 +298,18 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
                 malformed_parse_output,
             ),
         )
-        client = FakeHarnessClient()
         with self.assertRaisesRegex(ValueError, "schema rejected.*parsed"):
-            DeepSeekReadonlyRunner(
-                self.package,
-                self.runtime_dir,
-                DeepSeekReadonlyAdapter(tool_host=ReadonlyToolHost(bindings), client=client),
-            ).run(self.facts, run_id="run-invalid-output")
-        self.assertEqual(client.calls, [])
+            ReadonlyToolHost(bindings).invoke(
+                next(
+                    item
+                    for item in read_json(self.package / "registry.lock.json")[
+                        "resolved_assets"
+                    ]
+                    if item.get("name") == "parse-business-intent"
+                ),
+                {"facts": self.facts, "node_id": "parse-intent"},
+                "test-invalid-output",
+            )
 
     def test_agent_turn_budget_exhausts_before_model_call(self) -> None:
         profile_path = next((self.package / "agents").glob("*.agent.json"))
@@ -261,9 +317,7 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
         profile["spec"]["budgets"]["max_turns"] = 0
         write_json(profile_path, profile)
         client = FakeHarnessClient()
-        runner = DeepSeekReadonlyRunner(
-            self.package, self.runtime_dir, DeepSeekReadonlyAdapter(client=client)
-        )
+        runner = self.runner(DeepSeekReadonlyAdapter(client=client))
         with self.assertRaisesRegex(BudgetExceeded, "before execution"):
             runner.run(self.facts, run_id="run-turn-budget")
         self.assertEqual(client.calls, [])
@@ -284,9 +338,7 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
                 "reasoningTokens": 1,
             }
         )
-        runner = DeepSeekReadonlyRunner(
-            self.package, self.runtime_dir, DeepSeekReadonlyAdapter(client=client)
-        )
+        runner = self.runner(DeepSeekReadonlyAdapter(client=client))
         with self.assertRaisesRegex(BudgetExceeded, "after provider usage"):
             runner.run(self.facts, run_id="run-token-budget")
         state = runner.runtime.load_state("run-token-budget")
@@ -334,19 +386,15 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
     def test_rejects_model_facts_that_differ_from_tool_evidence(self) -> None:
         client = FakeHarnessClient(wrong_facts=True)
         with self.assertRaisesRegex(ValueError, "Model facts differ"):
-            DeepSeekReadonlyRunner(
-                self.package,
-                self.runtime_dir,
-                DeepSeekReadonlyAdapter(client=client),
-            ).run(self.facts, run_id="run-untrusted-facts")
+            self.runner(DeepSeekReadonlyAdapter(client=client)).run(
+                self.facts, run_id="run-untrusted-facts"
+            )
 
     def test_prompt_supplies_exact_required_response(self) -> None:
         client = FakeHarnessClient()
-        DeepSeekReadonlyRunner(
-            self.package,
-            self.runtime_dir,
-            DeepSeekReadonlyAdapter(client=client),
-        ).run(self.facts, run_id="run-required-response")
+        self.runner(DeepSeekReadonlyAdapter(client=client)).run(
+            self.facts, run_id="run-required-response"
+        )
         payload = client.calls[0]["payload"]
         self.assertEqual(
             payload["required_response"],
@@ -359,19 +407,15 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
 
     def test_rejects_model_evidence_that_differs_from_trusted_tool(self) -> None:
         with self.assertRaisesRegex(ValueError, "Model evidence differs"):
-            DeepSeekReadonlyRunner(
-                self.package,
-                self.runtime_dir,
-                DeepSeekReadonlyAdapter(client=FakeHarnessClient(wrong_evidence=True)),
+            self.runner(
+                DeepSeekReadonlyAdapter(client=FakeHarnessClient(wrong_evidence=True))
             ).run(self.facts, run_id="run-untrusted-evidence")
 
     def test_surfaces_structured_harness_error_and_redacts_api_key(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "AUTHENTICATION_FAILED") as caught:
-            DeepSeekReadonlyRunner(
-                self.package,
-                self.runtime_dir,
-                DeepSeekReadonlyAdapter(client=ErrorHarnessClient()),
-            ).run(self.facts, run_id="run-provider-error")
+            self.runner(DeepSeekReadonlyAdapter(client=ErrorHarnessClient())).run(
+                self.facts, run_id="run-provider-error"
+            )
         self.assertNotIn("sk-super-secret-value", str(caught.exception))
         self.assertIn("[REDACTED_API_KEY]", str(caught.exception))
 
@@ -386,12 +430,14 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
             ROOT / "fixtures/catalog.snapshot.json",
             ROOT / "contracts/system-definition.json",
             package,
+            signing_key_path=self.private_key,
         )
         with self.assertRaisesRegex(ValueError, "human_gate, scheduled_loops"):
             DeepSeekReadonlyRunner(
                 package,
                 self.root / "governed-runtime",
                 DeepSeekReadonlyAdapter(client=FakeHarnessClient()),
+                self.trust_policy,
             ).run(run_id="run-capabilities")
 
 
@@ -402,6 +448,7 @@ class DeepSeekReadonlyMultinodeTest(unittest.TestCase):
         self.package = self.root / "package"
         self.runtime_dir = self.root / "runtime"
         self.business = ROOT / "examples/deepseek-readonly-multinode/business-requirement.json"
+        self.private_key, self.trust_policy = prepare_test_trust(self.root)
         bpmn = self.root / "process.bpmn"
         generate_bpmn(self.business, bpmn)
         report = compile_package(
@@ -410,6 +457,7 @@ class DeepSeekReadonlyMultinodeTest(unittest.TestCase):
             ROOT / "fixtures/catalog.snapshot.json",
             ROOT / "contracts/system-definition.json",
             self.package,
+            signing_key_path=self.private_key,
         )
         self.assertEqual(report["generated_agents"], 2)
         self.assertEqual(report["resolved_tools"], 2)
@@ -420,13 +468,16 @@ class DeepSeekReadonlyMultinodeTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    def runner(self, adapter: DeepSeekReadonlyAdapter) -> DeepSeekReadonlyRunner:
+        return DeepSeekReadonlyRunner(
+            self.package, self.runtime_dir, adapter, self.trust_policy
+        )
+
     def test_two_agents_and_tools_route_clear_description_to_ready(self) -> None:
         client = FakeHarnessClient()
-        report = DeepSeekReadonlyRunner(
-            self.package,
-            self.runtime_dir,
-            DeepSeekReadonlyAdapter(client=client),
-        ).run(self.facts, run_id="run-multinode-ready")
+        report = self.runner(DeepSeekReadonlyAdapter(client=client)).run(
+            self.facts, run_id="run-multinode-ready"
+        )
 
         self.assertEqual(report["result"], "PASS")
         self.assertEqual(report["completed_actions"], 2)
@@ -444,11 +495,9 @@ class DeepSeekReadonlyMultinodeTest(unittest.TestCase):
         facts = read_json(
             ROOT / "examples/deepseek-readonly-multinode/ambiguous-facts.json"
         )
-        report = DeepSeekReadonlyRunner(
-            self.package,
-            self.runtime_dir,
-            DeepSeekReadonlyAdapter(client=FakeHarnessClient()),
-        ).run(facts, run_id="run-multinode-ambiguous")
+        report = self.runner(DeepSeekReadonlyAdapter(client=FakeHarnessClient())).run(
+            facts, run_id="run-multinode-ambiguous"
+        )
 
         self.assertEqual(report["result"], "PASS")
         state = ReferenceRuntime(self.package, self.runtime_dir).load_state(
@@ -463,11 +512,7 @@ class DeepSeekReadonlyMultinodeTest(unittest.TestCase):
 
     def test_second_agent_interruption_resumes_without_replaying_first_node(self) -> None:
         client = FakeHarnessClient(fail_on_call=2)
-        runner = DeepSeekReadonlyRunner(
-            self.package,
-            self.runtime_dir,
-            DeepSeekReadonlyAdapter(client=client),
-        )
+        runner = self.runner(DeepSeekReadonlyAdapter(client=client))
         with self.assertRaisesRegex(RuntimeError, "injected Harness interruption"):
             runner.run(self.facts, run_id="run-multinode-resume")
         paused = runner.runtime.load_state("run-multinode-resume")
@@ -493,6 +538,7 @@ class DeepSeekReadonlyHarnessLiveTest(unittest.TestCase):
             package = root / "package"
             bpmn = root / "process.bpmn"
             business = ROOT / "examples/deepseek-readonly/business-requirement.json"
+            private_key, trust_policy = prepare_test_trust(root)
             generate_bpmn(business, bpmn)
             compile_package(
                 bpmn,
@@ -500,6 +546,7 @@ class DeepSeekReadonlyHarnessLiveTest(unittest.TestCase):
                 ROOT / "fixtures/catalog.snapshot.json",
                 ROOT / "contracts/system-definition.json",
                 package,
+                signing_key_path=private_key,
             )
             runtime_dir = root / "runtime"
             adapter = DeepSeekReadonlyAdapter(
@@ -510,7 +557,9 @@ class DeepSeekReadonlyHarnessLiveTest(unittest.TestCase):
                 )
             )
             try:
-                report = DeepSeekReadonlyRunner(package, runtime_dir, adapter).run(
+                report = DeepSeekReadonlyRunner(
+                    package, runtime_dir, adapter, trust_policy
+                ).run(
                     read_json(ROOT / "examples/deepseek-readonly/initial-facts.json"),
                     run_id="run-live-smoke",
                 )
@@ -532,6 +581,7 @@ class DeepSeekReadonlyMultinodeLiveTest(unittest.TestCase):
             bpmn = root / "process.bpmn"
             example = ROOT / "examples/deepseek-readonly-multinode"
             business = example / "business-requirement.json"
+            private_key, trust_policy = prepare_test_trust(root)
             generate_bpmn(business, bpmn)
             compile_package(
                 bpmn,
@@ -539,6 +589,7 @@ class DeepSeekReadonlyMultinodeLiveTest(unittest.TestCase):
                 ROOT / "fixtures/catalog.snapshot.json",
                 ROOT / "contracts/system-definition.json",
                 package,
+                signing_key_path=private_key,
             )
             runtime_dir = root / "runtime"
             adapter = DeepSeekReadonlyAdapter(
@@ -549,7 +600,9 @@ class DeepSeekReadonlyMultinodeLiveTest(unittest.TestCase):
                 )
             )
             try:
-                report = DeepSeekReadonlyRunner(package, runtime_dir, adapter).run(
+                report = DeepSeekReadonlyRunner(
+                    package, runtime_dir, adapter, trust_policy
+                ).run(
                     read_json(example / "initial-facts.json"),
                     run_id="run-multinode-live",
                 )

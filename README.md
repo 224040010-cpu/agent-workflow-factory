@@ -36,12 +36,13 @@
 - DeepSeek Harness 只读端到端执行：固定 Tool、真实 Agent 会话、可信 facts、暂停恢复与轨迹回放。
 - DeepSeek 多节点只读 Graph：两个 Agent、两个 Tool、可信 facts 网关与双终点路由。
 - DeepSeek v0.7 治理：Tool Binding 输入/输出 Schema、实现摘要、按 Agent/节点预算记账与超限升级。
+- DeepSeek v0.8 信任链：Ed25519 分离签名、公钥信任库、密钥轮换状态与执行前强制验签。
 
-尚未实现：理解任意自由文本的模型解释器、生产级调度器与会话存储、DeepSeek 人工审批和定时循环绑定、Binding 发布者签名、带签名的事件存储、补偿事务和交互式可视化界面。
+尚未实现：理解任意自由文本的模型解释器、生产级调度器与会话存储、DeepSeek 人工审批和定时循环绑定、KMS/HSM 私钥托管、整个软件包签名、带签名的事件存储、补偿事务和交互式可视化界面。
 
 ## 快速评审
 
-需要 Python 3.11 或更高版本。v3 编译器仅使用 Python 标准库。
+需要 Python 3.11 或更高版本。v0.8 的签名层使用 `cryptography`，安装仓库后即可获得依赖：`python -m pip install -e .`。
 
 ```bash
 python scripts/workflowctl.py verify-definition
@@ -94,4 +95,4 @@ python -m unittest discover -s tests -v
 - Registry 状态变更；
 - 运行期间从持续变化的 Git 分支动态发现能力。
 
-自然语言输入格式和返回文件参见 [`docs/business-text-to-diagram.md`](docs/business-text-to-diagram.md)。架构和运行时评审细节参见 [`docs/architecture.md`](docs/architecture.md)、[`docs/reference-runtime.md`](docs/reference-runtime.md)、[`docs/deepseek-readonly-mvp.md`](docs/deepseek-readonly-mvp.md)、[`docs/deepseek-readonly-multinode.md`](docs/deepseek-readonly-multinode.md)、[`docs/deepseek-readonly-v0.7.md`](docs/deepseek-readonly-v0.7.md) 和双仓共享的总定义。
+自然语言输入格式和返回文件参见 [`docs/business-text-to-diagram.md`](docs/business-text-to-diagram.md)。架构和运行时评审细节参见 [`docs/architecture.md`](docs/architecture.md)、[`docs/reference-runtime.md`](docs/reference-runtime.md)、[`docs/deepseek-readonly-mvp.md`](docs/deepseek-readonly-mvp.md)、[`docs/deepseek-readonly-multinode.md`](docs/deepseek-readonly-multinode.md)、[`docs/deepseek-readonly-v0.7.md`](docs/deepseek-readonly-v0.7.md)、[`docs/deepseek-readonly-v0.8.md`](docs/deepseek-readonly-v0.8.md) 和双仓共享的总定义。

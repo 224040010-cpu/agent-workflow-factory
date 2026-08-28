@@ -36,8 +36,13 @@
     "model-facts-equal-trusted-tool-facts",
     "tool-binding-input-output-json-schema",
     "tool-binding-reviewed-implementation-digest",
-    "per-agent-and-node-budget-accounting"
+    "per-agent-and-node-budget-accounting",
+    "ed25519-binding-manifest-signature",
+    "ed25519-registry-lock-signature",
+    "trusted-publisher-key-status"
   ],
   "host_binding_manifest": "readonly-tool-bindings.json",
+  "host_binding_signature": "readonly-tool-bindings.sig.json",
+  "trust_store": "../../trust/trusted-publishers.json",
   "unsupported_behavior": "fail-before-execution-never-silently-drop"
 }

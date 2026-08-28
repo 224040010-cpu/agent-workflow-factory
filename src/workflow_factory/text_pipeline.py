@@ -16,6 +16,8 @@ def build_from_business_text(
     definition_path: Path,
     output_dir: Path,
     workflow_id: str | None = None,
+    signing_key_path: Path | None = None,
+    signing_publisher: str = "agent-workflow-factory-build",
 ) -> dict:
     text = source_path.read_text(encoding="utf-8")
     requirement, interpretation = interpret_business_text(text, workflow_id=workflow_id)
@@ -36,6 +38,8 @@ def build_from_business_text(
         catalog_path,
         definition_path,
         package_dir,
+        signing_key_path=signing_key_path,
+        signing_publisher=signing_publisher,
     )
     validation_errors = validate_package(package_dir)
     if validation_errors:

@@ -16,7 +16,9 @@ from workflow_factory.compiler import compile_package  # noqa: E402
 from workflow_factory.deepseek_harness import (  # noqa: E402
     DeepSeekReadonlyAdapter,
     DeepSeekReadonlyRunner,
+    DeepSeekTrustPolicy,
 )
+from workflow_factory.signing import generate_signing_key  # noqa: E402
 from workflow_factory.util import read_json  # noqa: E402
 from workflow_factory.validator import validate_package  # noqa: E402
 
@@ -51,6 +53,20 @@ class ContractHarnessClient:
 def main() -> None:
     if BUILD.exists():
         shutil.rmtree(BUILD)
+    BUILD.mkdir(parents=True)
+    trust_store = BUILD / "trusted-publishers.json"
+    shutil.copyfile(ROOT / "trust/trusted-publishers.json", trust_store)
+    private_key = BUILD / "test-build-key.pem"
+    generate_signing_key(
+        private_key, trust_store, "agent-workflow-factory-build"
+    )
+    trust_policy = DeepSeekTrustPolicy(
+        trust_store=trust_store,
+        binding_manifest=ROOT / "adapters/deepseek-harness/readonly-tool-bindings.json",
+        binding_signature=(
+            ROOT / "adapters/deepseek-harness/readonly-tool-bindings.sig.json"
+        ),
+    )
     package = BUILD / "package"
     bpmn = BUILD / "process.bpmn"
     business = ROOT / "examples/deepseek-readonly/business-requirement.json"
@@ -61,14 +77,18 @@ def main() -> None:
         ROOT / "fixtures/catalog.snapshot.json",
         ROOT / "contracts/system-definition.json",
         package,
+        signing_key_path=private_key,
     )
-    errors = validate_package(package)
+    errors = validate_package(
+        package, trust_store=trust_store, require_registry_signature=True
+    )
     if errors:
         raise RuntimeError(f"DeepSeek MVP package validation failed: {errors}")
     report = DeepSeekReadonlyRunner(
         package,
         BUILD / "runtime",
         DeepSeekReadonlyAdapter(client=ContractHarnessClient()),
+        trust_policy,
     ).run(
         read_json(ROOT / "examples/deepseek-readonly/initial-facts.json"),
         run_id="run-deepseek-contract-mvp",

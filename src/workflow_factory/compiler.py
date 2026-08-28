@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .bpmn import parse_bpmn
 from .catalog import resolve_catalog
+from .signing import sign_artifact
 from .util import read_json, risk_number, write_json
 
 
@@ -146,6 +147,8 @@ def compile_package(
     catalog_path: Path,
     definition_path: Path,
     output_dir: Path,
+    signing_key_path: Path | None = None,
+    signing_publisher: str = "agent-workflow-factory-build",
 ) -> dict:
     business = read_json(business_path)
     definition = read_json(definition_path)
@@ -191,7 +194,15 @@ def compile_package(
 
     write_json(output_dir / "workflow.ir.json", ir)
     write_json(output_dir / "graph.json", graph)
-    write_json(output_dir / "registry.lock.json", resolved.lockfile())
+    lock_path = output_dir / "registry.lock.json"
+    write_json(lock_path, resolved.lockfile())
+    if signing_key_path is not None:
+        sign_artifact(
+            lock_path,
+            signing_key_path,
+            output_dir / "registry.lock.sig.json",
+            signing_publisher,
+        )
     write_json(output_dir / "runtime.policy.json", policy)
     for profile in profiles:
         write_json(output_dir / "agents" / f"{profile['metadata']['id']}.agent.json", profile)
@@ -207,6 +218,7 @@ def compile_package(
         "resolved_tools": len(resolved.tools),
         "generated_agents": len(profiles),
         "generated_loops": 1 if loop_spec else 0,
+        "registry_lock_signed": signing_key_path is not None,
         "warnings": [
             f"Node {node['id']} has no explicit Agent; host executes its action."
             for node in ir["spec"]["nodes"]

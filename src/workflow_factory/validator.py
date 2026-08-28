@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .signing import verify_artifact
 from .util import read_json
 
 
@@ -77,7 +78,12 @@ def validate_ir(ir: dict) -> list[str]:
     return errors
 
 
-def validate_package(package_dir: Path) -> list[str]:
+def validate_package(
+    package_dir: Path,
+    trust_store: Path | None = None,
+    require_registry_signature: bool = False,
+    expected_publisher: str = "agent-workflow-factory-build",
+) -> list[str]:
     errors: list[str] = []
     required = (
         "workflow.ir.json",
@@ -105,6 +111,22 @@ def validate_package(package_dir: Path) -> list[str]:
                 errors.append(f"locked asset {asset.get('name')} is missing {field}")
         if asset.get("status") not in {"approved", "restricted"}:
             errors.append(f"locked asset {asset.get('name')} has ineligible status")
+
+    signature_path = package_dir / "registry.lock.sig.json"
+    if require_registry_signature and not signature_path.is_file():
+        errors.append("registry.lock.json is missing required detached signature")
+    if require_registry_signature and trust_store is None:
+        errors.append("registry.lock signature verification requires a trust store")
+    if signature_path.is_file() and trust_store is not None:
+        try:
+            verify_artifact(
+                package_dir / "registry.lock.json",
+                signature_path,
+                trust_store,
+                expected_publisher,
+            )
+        except (OSError, ValueError, KeyError) as exc:
+            errors.append(f"registry.lock signature invalid: {exc}")
 
     loop = ir.get("spec", {}).get("loop")
     if loop and not list((package_dir / "loops").glob("*.loop.json")):

@@ -1,0 +1,16 @@
+{
+  "statement": {
+    "schema_version": "1.0.0",
+    "subject": {
+      "name": "readonly-tool-bindings.json",
+      "digest": "sha256:ad752c5ac496a554931b2248ed733428cffea656ebabd20b94a4b6a76d1d357a",
+      "media_type": "application/json"
+    },
+    "publisher": "agent-workflow-factory-adapter-maintainers",
+    "key_id": "sha256:71f60f92d58ec668ad1eadb9cf0842ae2f29b5276dc393e20f6e92c89e509f72",
+    "algorithm": "Ed25519",
+    "canonicalization": "AWF-CANONICAL-JSON-v1",
+    "issued_at": "2026-08-28T00:00:00+00:00"
+  },
+  "signature": "5faPmDtTRvC3rSVOgzHEvTa64WnhyfjBS9TGcXJ45KJLKir71/XN0CeopdL9ipzx4gRlKF5Tk/ntKiQbu/x7Aw=="
+}

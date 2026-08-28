@@ -111,9 +111,9 @@ DSH_MULTINODE_LIVE_TEST=1 python -m unittest discover -s tests -p 'test_deepseek
 - 缓存 Token 被计入，reasoning Token 不重复计数；
 - 超限进入 `escalated`，可信 facts 不提交。
 
-## v0.8 建议边界
+## v0.8 完成情况
 
-- 对 Binding 清单和 Registry lock 引入发布者签名与验证公钥；
+- Binding 清单和 Registry lock 的 Ed25519 发布者签名与验证公钥已完成，详见 [`deepseek-readonly-v0.8.md`](deepseek-readonly-v0.8.md)；
 - 将预算上限下推为 Provider 的单回合输出限制，减少事后 Token 超限；
 - 增加人工审批 Provider Binding，保持定时循环仍默认关闭；
 - 将 JSONL 事件存储替换为具备并发控制和不可篡改保留策略的生产存储。

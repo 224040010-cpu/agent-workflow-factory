@@ -16,7 +16,9 @@ from workflow_factory.compiler import compile_package  # noqa: E402
 from workflow_factory.deepseek_harness import (  # noqa: E402
     DeepSeekReadonlyAdapter,
     DeepSeekReadonlyRunner,
+    DeepSeekTrustPolicy,
 )
+from workflow_factory.signing import generate_signing_key  # noqa: E402
 from workflow_factory.util import read_json  # noqa: E402
 from workflow_factory.validator import validate_package  # noqa: E402
 
@@ -46,17 +48,38 @@ class ContractHarnessClient:
         return None
 
 
-def execute(package: Path, facts: Path, runtime: Path, run_id: str) -> dict:
+def execute(
+    package: Path,
+    facts: Path,
+    runtime: Path,
+    run_id: str,
+    trust_policy: DeepSeekTrustPolicy,
+) -> dict:
     return DeepSeekReadonlyRunner(
         package,
         runtime,
         DeepSeekReadonlyAdapter(client=ContractHarnessClient()),
+        trust_policy,
     ).run(read_json(facts), run_id=run_id)
 
 
 def main() -> None:
     if BUILD.exists():
         shutil.rmtree(BUILD)
+    BUILD.mkdir(parents=True)
+    trust_store = BUILD / "trusted-publishers.json"
+    shutil.copyfile(ROOT / "trust/trusted-publishers.json", trust_store)
+    private_key = BUILD / "test-build-key.pem"
+    generate_signing_key(
+        private_key, trust_store, "agent-workflow-factory-build"
+    )
+    trust_policy = DeepSeekTrustPolicy(
+        trust_store=trust_store,
+        binding_manifest=ROOT / "adapters/deepseek-harness/readonly-tool-bindings.json",
+        binding_signature=(
+            ROOT / "adapters/deepseek-harness/readonly-tool-bindings.sig.json"
+        ),
+    )
     package = BUILD / "package"
     bpmn = BUILD / "process.bpmn"
     example = ROOT / "examples/deepseek-readonly-multinode"
@@ -68,8 +91,11 @@ def main() -> None:
         ROOT / "fixtures/catalog.snapshot.json",
         ROOT / "contracts/system-definition.json",
         package,
+        signing_key_path=private_key,
     )
-    errors = validate_package(package)
+    errors = validate_package(
+        package, trust_store=trust_store, require_registry_signature=True
+    )
     if errors:
         raise RuntimeError(f"Multinode package validation failed: {errors}")
     ready = execute(
@@ -77,12 +103,14 @@ def main() -> None:
         example / "initial-facts.json",
         BUILD / "runtime-ready",
         "run-multinode-ready",
+        trust_policy,
     )
     ambiguous = execute(
         package,
         example / "ambiguous-facts.json",
         BUILD / "runtime-ambiguous",
         "run-multinode-ambiguous",
+        trust_policy,
     )
     result = {
         "result": "PASS"

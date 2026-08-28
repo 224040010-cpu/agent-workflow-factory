@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow-factory.local/schemas/trust-store.schema.json",
+  "title": "Agent Workflow Factory Trusted Publishers",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "keys"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "keys": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key_id", "publisher", "algorithm", "status", "public_key"],
+        "properties": {
+          "key_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "publisher": {"type": "string", "minLength": 1},
+          "algorithm": {"const": "Ed25519"},
+          "status": {"enum": ["active", "retired", "revoked"]},
+          "public_key": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

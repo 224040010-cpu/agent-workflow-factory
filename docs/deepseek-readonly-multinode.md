@@ -109,4 +109,4 @@ python scripts/workflowctl.py run \
 
 ## 下一阶段边界
 
-Tool 输入/输出 JSON Schema、每 Agent/节点 Token 与 Tool 调用预算计量、宿主实现摘要已在 v0.7 完成。下一步应增加 Binding 发布者签名和验证公钥，并继续保持人工审批和定时循环关闭，直到对应 Provider 与生产事件存储完成。
+Tool 输入/输出 JSON Schema、预算计量和宿主实现摘要已在 v0.7 完成；Binding 与 Registry lock 的 Ed25519 发布者签名已在 v0.8 完成，详见 [`deepseek-readonly-v0.8.md`](deepseek-readonly-v0.8.md)。下一步应接入 KMS/HSM、整个软件包签名，并继续保持人工审批和定时循环关闭，直到对应 Provider 与生产事件存储完成。
