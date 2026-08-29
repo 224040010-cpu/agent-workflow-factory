@@ -19,10 +19,17 @@ from workflow_factory.deepseek_harness import (  # noqa: E402
     DeepSeekReadonlyRunner,
     DeepSeekTrustPolicy,
 )
-from workflow_factory.reference_runtime import ReferenceRuntime  # noqa: E402
+from workflow_factory.reference_runtime import (  # noqa: E402
+    ReferenceRuntime,
+    RuntimeIntegrityPolicy,
+)
 from workflow_factory.signing import (  # noqa: E402
+    FileEd25519SigningProvider,
+    Pkcs11Ed25519SigningProvider,
+    SigningProvider,
     generate_root_key,
     generate_signing_key,
+    register_signing_public_key,
     sign_artifact,
     verify_artifact,
     verify_trust_store,
@@ -39,6 +46,99 @@ def verify_definition(definition: Path, checksum: Path) -> None:
     if expected != actual:
         raise ValueError(f"system-definition checksum mismatch: {expected} != {actual}")
     print(f"Verified system definition {data['definition_version']} ({actual[:12]}...)")
+
+
+def add_pkcs11_arguments(parser: argparse.ArgumentParser, prefix: str = "") -> None:
+    option = f"{prefix}-" if prefix else ""
+    dest = f"{prefix.replace('-', '_')}_" if prefix else ""
+    parser.add_argument(f"--{option}pkcs11-module", dest=f"{dest}pkcs11_module")
+    parser.add_argument(f"--{option}pkcs11-token-label", dest=f"{dest}pkcs11_token_label")
+    parser.add_argument(f"--{option}pkcs11-key-label", dest=f"{dest}pkcs11_key_label")
+    parser.add_argument(f"--{option}pkcs11-key-id", dest=f"{dest}pkcs11_key_id")
+    parser.add_argument(f"--{option}pkcs11-object-id", dest=f"{dest}pkcs11_object_id")
+    parser.add_argument(
+        f"--{option}pkcs11-pin-env",
+        dest=f"{dest}pkcs11_pin_env",
+        default="AWF_PKCS11_PIN",
+    )
+
+
+def signing_provider_from_args(
+    args: argparse.Namespace,
+    prefix: str = "",
+) -> SigningProvider | None:
+    stem = f"{prefix}_" if prefix else ""
+    key_path = getattr(args, f"{stem}signing_key", None)
+    module = getattr(args, f"{stem}pkcs11_module", None)
+    fields = {
+        "module": module,
+        "token label": getattr(args, f"{stem}pkcs11_token_label", None),
+        "key label": getattr(args, f"{stem}pkcs11_key_label", None),
+        "key id": getattr(args, f"{stem}pkcs11_key_id", None),
+    }
+    if key_path is not None and any(fields.values()):
+        raise ValueError("PEM signing key and PKCS#11 signer are mutually exclusive")
+    if key_path is not None:
+        return FileEd25519SigningProvider(key_path)
+    if not any(fields.values()):
+        return None
+    missing = [name for name, value in fields.items() if not value]
+    if missing:
+        raise ValueError("Incomplete PKCS#11 signer configuration: " + ", ".join(missing))
+    object_id = getattr(args, f"{stem}pkcs11_object_id", None)
+    try:
+        object_id_bytes = bytes.fromhex(object_id) if object_id else None
+    except ValueError as exc:
+        raise ValueError("PKCS#11 object id must be hexadecimal") from exc
+    return Pkcs11Ed25519SigningProvider(
+        module,
+        fields["token label"],
+        fields["key label"],
+        fields["key id"],
+        getattr(args, f"{stem}pkcs11_pin_env"),
+        object_id_bytes,
+    )
+
+
+def add_runtime_integrity_arguments(
+    parser: argparse.ArgumentParser,
+    include_signer: bool = True,
+) -> None:
+    if include_signer:
+        parser.add_argument("--runtime-signing-key", type=Path)
+        add_pkcs11_arguments(parser, "runtime")
+    parser.add_argument("--runtime-trust-store", type=Path)
+    parser.add_argument("--runtime-trust-store-signature", type=Path)
+    parser.add_argument("--runtime-trust-root-public-key", type=Path)
+    parser.add_argument(
+        "--runtime-publisher", default="agent-workflow-factory-runtime"
+    )
+    parser.add_argument("--require-runtime-signatures", action="store_true")
+    parser.add_argument("--require-runtime-trust-root", action="store_true")
+    parser.add_argument("--event-store", choices=["jsonl", "sqlite"], default="jsonl")
+    parser.add_argument("--lease-owner")
+    parser.add_argument("--lease-ttl-seconds", type=int, default=30)
+    parser.add_argument("--retention-days", type=int, default=90)
+
+
+def reference_runtime_from_args(args: argparse.Namespace) -> ReferenceRuntime:
+    return ReferenceRuntime(
+        args.package,
+        args.runtime_dir,
+        RuntimeIntegrityPolicy(
+            signing_provider=signing_provider_from_args(args, "runtime"),
+            trust_store=args.runtime_trust_store,
+            trust_store_signature=args.runtime_trust_store_signature,
+            trust_root_public_key=args.runtime_trust_root_public_key,
+            publisher=args.runtime_publisher,
+            require_signatures=args.require_runtime_signatures,
+            require_rooted_trust=args.require_runtime_trust_root,
+        ),
+        event_store_backend=args.event_store,
+        lease_owner=args.lease_owner,
+        lease_ttl_seconds=args.lease_ttl_seconds,
+        retention_days=args.retention_days,
+    )
 
 
 def main() -> int:
@@ -66,6 +166,7 @@ def main() -> int:
     )
     text_build.add_argument("--output", type=Path, required=True)
     text_build.add_argument("--signing-key", type=Path)
+    add_pkcs11_arguments(text_build)
     text_build.add_argument(
         "--signing-publisher", default="agent-workflow-factory-build"
     )
@@ -79,6 +180,7 @@ def main() -> int:
     )
     compile_command.add_argument("--output", type=Path, required=True)
     compile_command.add_argument("--signing-key", type=Path)
+    add_pkcs11_arguments(compile_command)
     compile_command.add_argument(
         "--signing-publisher", default="agent-workflow-factory-build"
     )
@@ -96,6 +198,14 @@ def main() -> int:
     keygen.add_argument("--private-key", type=Path, required=True)
     keygen.add_argument("--trust-store", type=Path, required=True)
     keygen.add_argument("--publisher", required=True)
+
+    register_key = subparsers.add_parser("register-key")
+    register_key.add_argument("--public-key", type=Path, required=True)
+    register_key.add_argument("--trust-store", type=Path, required=True)
+    register_key.add_argument("--publisher", required=True)
+    register_key.add_argument(
+        "--status", choices=["active", "retired", "revoked"], default="active"
+    )
 
     root_keygen = subparsers.add_parser("keygen-root")
     root_keygen.add_argument("--private-key", type=Path, required=True)
@@ -123,11 +233,13 @@ def main() -> int:
     runtime_start.add_argument("--runtime-dir", type=Path, required=True)
     runtime_start.add_argument("--run-id")
     runtime_start.add_argument("--facts", type=Path)
+    add_runtime_integrity_arguments(runtime_start)
 
     runtime_route = subparsers.add_parser("runtime-route")
     runtime_route.add_argument("package", type=Path)
     runtime_route.add_argument("run_id")
     runtime_route.add_argument("--runtime-dir", type=Path, required=True)
+    add_runtime_integrity_arguments(runtime_route)
 
     runtime_complete = subparsers.add_parser("runtime-complete")
     runtime_complete.add_argument("package", type=Path)
@@ -135,22 +247,31 @@ def main() -> int:
     runtime_complete.add_argument("node_id")
     runtime_complete.add_argument("--runtime-dir", type=Path, required=True)
     runtime_complete.add_argument("--facts", type=Path, required=True)
+    add_runtime_integrity_arguments(runtime_complete)
 
     runtime_pause = subparsers.add_parser("runtime-pause")
     runtime_pause.add_argument("package", type=Path)
     runtime_pause.add_argument("run_id")
     runtime_pause.add_argument("--runtime-dir", type=Path, required=True)
     runtime_pause.add_argument("--reason", required=True)
+    add_runtime_integrity_arguments(runtime_pause)
 
     runtime_resume = subparsers.add_parser("runtime-resume")
     runtime_resume.add_argument("package", type=Path)
     runtime_resume.add_argument("run_id")
     runtime_resume.add_argument("--runtime-dir", type=Path, required=True)
+    add_runtime_integrity_arguments(runtime_resume)
 
     runtime_replay = subparsers.add_parser("runtime-replay")
     runtime_replay.add_argument("package", type=Path)
     runtime_replay.add_argument("run_id")
     runtime_replay.add_argument("--runtime-dir", type=Path, required=True)
+    add_runtime_integrity_arguments(runtime_replay, include_signer=False)
+
+    runtime_purge = subparsers.add_parser("runtime-purge")
+    runtime_purge.add_argument("package", type=Path)
+    runtime_purge.add_argument("--runtime-dir", type=Path, required=True)
+    add_runtime_integrity_arguments(runtime_purge, include_signer=False)
 
     run_command = subparsers.add_parser("run")
     run_command.add_argument("package", type=Path)
@@ -190,6 +311,15 @@ def main() -> int:
         type=Path,
         default=ROOT / "adapters/deepseek-harness/readonly-tool-bindings.sig.json",
     )
+    run_command.add_argument("--runtime-signing-key", type=Path)
+    add_pkcs11_arguments(run_command, "runtime")
+    run_command.add_argument(
+        "--runtime-publisher", default="agent-workflow-factory-runtime"
+    )
+    run_command.add_argument("--event-store", choices=["jsonl", "sqlite"], default="sqlite")
+    run_command.add_argument("--lease-owner", default="workflowctl-deepseek")
+    run_command.add_argument("--lease-ttl-seconds", type=int, default=30)
+    run_command.add_argument("--retention-days", type=int, default=90)
 
     args = parser.parse_args()
     try:
@@ -205,8 +335,8 @@ def main() -> int:
                 args.definition,
                 args.output,
                 workflow_id=args.workflow_id,
-                signing_key_path=args.signing_key,
                 signing_publisher=args.signing_publisher,
+                signing_provider=signing_provider_from_args(args),
             )
             print(json.dumps(manifest, ensure_ascii=False, indent=2))
         elif args.command == "compile":
@@ -216,8 +346,8 @@ def main() -> int:
                 args.catalog,
                 args.definition,
                 args.output,
-                signing_key_path=args.signing_key,
                 signing_publisher=args.signing_publisher,
+                signing_provider=signing_provider_from_args(args),
             )
             print(
                 f"Package → {args.output} "
@@ -241,6 +371,14 @@ def main() -> int:
         elif args.command == "keygen":
             record = generate_signing_key(
                 args.private_key, args.trust_store, args.publisher
+            )
+            print(json.dumps(record, ensure_ascii=False, indent=2))
+        elif args.command == "register-key":
+            record = register_signing_public_key(
+                args.public_key,
+                args.trust_store,
+                args.publisher,
+                args.status,
             )
             print(json.dumps(record, ensure_ascii=False, indent=2))
         elif args.command == "keygen-root":
@@ -270,29 +408,33 @@ def main() -> int:
             )
             print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.command == "runtime-start":
-            runtime = ReferenceRuntime(args.package, args.runtime_dir)
+            runtime = reference_runtime_from_args(args)
             facts = read_json(args.facts) if args.facts else {}
             state = runtime.start(facts, args.run_id)
             print(json.dumps(state, ensure_ascii=False, indent=2))
         elif args.command == "runtime-route":
-            runtime = ReferenceRuntime(args.package, args.runtime_dir)
+            runtime = reference_runtime_from_args(args)
             print(json.dumps(runtime.route(args.run_id).as_dict(), ensure_ascii=False, indent=2))
         elif args.command == "runtime-complete":
-            runtime = ReferenceRuntime(args.package, args.runtime_dir)
+            runtime = reference_runtime_from_args(args)
             state = runtime.complete(args.run_id, args.node_id, read_json(args.facts))
             print(json.dumps(state, ensure_ascii=False, indent=2))
         elif args.command == "runtime-pause":
-            runtime = ReferenceRuntime(args.package, args.runtime_dir)
+            runtime = reference_runtime_from_args(args)
             print(json.dumps(runtime.pause(args.run_id, args.reason), ensure_ascii=False, indent=2))
         elif args.command == "runtime-resume":
-            runtime = ReferenceRuntime(args.package, args.runtime_dir)
+            runtime = reference_runtime_from_args(args)
             print(json.dumps(runtime.resume(args.run_id), ensure_ascii=False, indent=2))
         elif args.command == "runtime-replay":
-            runtime = ReferenceRuntime(args.package, args.runtime_dir)
+            runtime = reference_runtime_from_args(args)
             report = runtime.replay(args.run_id)
             print(json.dumps(report, ensure_ascii=False, indent=2))
             if report["result"] != "PASS":
                 return 1
+        elif args.command == "runtime-purge":
+            runtime = reference_runtime_from_args(args)
+            count = runtime.purge_expired_runs()
+            print(f"Purged terminal runtime records: {count}")
         elif args.command == "run":
             settings = DeepSeekHarnessSettings(
                 provider=args.provider,
@@ -316,6 +458,12 @@ def main() -> int:
                         binding_manifest=args.binding_manifest,
                         binding_signature=args.binding_signature,
                     ),
+                    runtime_signing_provider=signing_provider_from_args(args, "runtime"),
+                    runtime_publisher=args.runtime_publisher,
+                    event_store_backend=args.event_store,
+                    lease_owner=args.lease_owner,
+                    lease_ttl_seconds=args.lease_ttl_seconds,
+                    retention_days=args.retention_days,
                 ).run(
                     read_json(args.facts) if args.facts else {},
                     run_id=args.run_id,

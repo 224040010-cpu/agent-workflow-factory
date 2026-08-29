@@ -19,6 +19,7 @@ from workflow_factory.deepseek_harness import (  # noqa: E402
     DeepSeekTrustPolicy,
 )
 from workflow_factory.signing import (  # noqa: E402
+    FileEd25519SigningProvider,
     generate_root_key,
     generate_signing_key,
     sign_artifact,
@@ -63,6 +64,10 @@ def main() -> None:
     private_key = BUILD / "test-build-key.pem"
     generate_signing_key(
         private_key, trust_store, "agent-workflow-factory-build"
+    )
+    runtime_private_key = BUILD / "test-runtime-key.pem"
+    generate_signing_key(
+        runtime_private_key, trust_store, "agent-workflow-factory-runtime"
     )
     root_private = BUILD / "test-root-key.pem"
     root_public = BUILD / "test-root-public.json"
@@ -111,6 +116,7 @@ def main() -> None:
         BUILD / "runtime",
         DeepSeekReadonlyAdapter(client=ContractHarnessClient()),
         trust_policy,
+        FileEd25519SigningProvider(runtime_private_key),
     ).run(
         read_json(ROOT / "examples/deepseek-readonly/initial-facts.json"),
         run_id="run-deepseek-contract-mvp",

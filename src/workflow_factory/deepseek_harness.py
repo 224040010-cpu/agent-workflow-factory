@@ -12,9 +12,15 @@ import re
 from typing import Any, Callable, Protocol
 
 from .package_integrity import verify_package_manifest
-from .reference_runtime import ReferenceRuntime, deep_merge, evaluate_expression, fact_value
+from .reference_runtime import (
+    ReferenceRuntime,
+    RuntimeIntegrityPolicy,
+    deep_merge,
+    evaluate_expression,
+    fact_value,
+)
 from .runtime_contracts import RuntimeCapabilities, negotiate
-from .signing import verify_artifact, verify_trust_store
+from .signing import SigningProvider, verify_artifact, verify_trust_store
 from .util import read_json
 
 
@@ -760,10 +766,40 @@ class DeepSeekReadonlyRunner:
         runtime_dir: Path,
         adapter: DeepSeekReadonlyAdapter,
         trust_policy: DeepSeekTrustPolicy | None = None,
+        runtime_signing_provider: SigningProvider | None = None,
+        runtime_publisher: str = "agent-workflow-factory-runtime",
+        event_store_backend: str = "jsonl",
+        lease_owner: str | None = None,
+        lease_ttl_seconds: int = 30,
+        retention_days: int = 90,
     ):
-        self.runtime = ReferenceRuntime(package_dir, runtime_dir)
         self.adapter = adapter
         self.trust_policy = trust_policy
+        self.runtime = ReferenceRuntime(
+            package_dir,
+            runtime_dir,
+            RuntimeIntegrityPolicy(
+                signing_provider=runtime_signing_provider,
+                trust_store=trust_policy.trust_store if trust_policy is not None else None,
+                trust_store_signature=(
+                    trust_policy.trust_store_signature
+                    if trust_policy is not None
+                    else None
+                ),
+                trust_root_public_key=(
+                    trust_policy.trust_root_public_key
+                    if trust_policy is not None
+                    else None
+                ),
+                publisher=runtime_publisher,
+                require_signatures=True,
+                require_rooted_trust=trust_policy is not None,
+            ),
+            event_store_backend=event_store_backend,
+            lease_owner=lease_owner,
+            lease_ttl_seconds=lease_ttl_seconds,
+            retention_days=retention_days,
+        )
         self.profiles = {
             path.stem.removesuffix(".agent"): read_json(path)
             for path in (package_dir / "agents").glob("*.agent.json")
@@ -776,7 +812,7 @@ class DeepSeekReadonlyRunner:
 
     def _verify_signatures(self) -> list[dict]:
         if self.trust_policy is None:
-            raise ValueError("DeepSeek v0.9 requires a rooted artifact trust policy")
+            raise ValueError("DeepSeek v1.0 requires a rooted artifact trust policy")
         policy = self.trust_policy
         trust_report = verify_trust_store(
             policy.trust_store,
@@ -843,6 +879,7 @@ class DeepSeekReadonlyRunner:
     ) -> dict:
         signature_reports = self._verify_signatures()
         self._verify_capabilities()
+        self.runtime.integrity.require_write_signer()
         run_id = run_id or "run-deepseek-readonly"
         checkpoint = self.runtime.checkpoint_path(run_id)
         if checkpoint.exists():

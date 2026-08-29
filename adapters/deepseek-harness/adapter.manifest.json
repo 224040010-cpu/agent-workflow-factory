@@ -43,7 +43,12 @@
     "root-signed-trust-store",
     "signed-complete-package-manifest",
     "reject-missing-modified-or-injected-package-files",
-    "pluggable-signing-provider"
+    "pluggable-signing-provider",
+    "pkcs11-ed25519-signing-provider",
+    "signed-runtime-events",
+    "signed-runtime-checkpoints",
+    "sqlite-transactional-event-store",
+    "runtime-leases-and-terminal-retention"
   ],
   "host_binding_manifest": "readonly-tool-bindings.json",
   "host_binding_signature": "readonly-tool-bindings.sig.json",

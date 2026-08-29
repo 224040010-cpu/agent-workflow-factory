@@ -7,7 +7,7 @@
   "required": [
     "run_id", "workflow_id", "workflow_version", "catalog_digest", "status",
     "current_node", "facts", "completed_nodes", "loop_rounds", "budget_usage",
-    "paused_from_status", "state_version"
+    "paused_from_status", "state_version", "trajectory_head"
   ],
   "properties": {
     "run_id": {"type": "string", "minLength": 1},
@@ -41,7 +41,11 @@
       "type": ["string", "null"],
       "enum": ["running", "waiting_action", "waiting_facts", null]
     },
-    "state_version": {"type": "integer", "minimum": 1}
+    "state_version": {"type": "integer", "minimum": 1},
+    "trajectory_head": {
+      "type": ["string", "null"],
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
   },
   "$defs": {
     "usage": {

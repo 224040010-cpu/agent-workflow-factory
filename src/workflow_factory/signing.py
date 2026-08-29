@@ -5,8 +5,11 @@ import binascii
 import copy
 from datetime import datetime, timezone
 import hashlib
+import importlib
 import json
+import os
 from pathlib import Path
+import re
 from typing import Any, Protocol
 
 from cryptography.exceptions import InvalidSignature
@@ -23,6 +26,7 @@ ALGORITHM = "Ed25519"
 CANONICALIZATION = "AWF-CANONICAL-JSON-v1"
 TRUSTED_KEY_STATUSES = {"active", "retired"}
 KNOWN_KEY_STATUSES = TRUSTED_KEY_STATUSES | {"revoked"}
+KEY_ID_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class SigningProvider(Protocol):
@@ -44,6 +48,75 @@ class FileEd25519SigningProvider:
 
     def sign(self, payload: bytes) -> bytes:
         return self._private_key.sign(payload)
+
+
+class Pkcs11Ed25519SigningProvider:
+    """Sign with an Ed25519 private key that never leaves a PKCS#11 token."""
+
+    def __init__(
+        self,
+        module_path: str,
+        token_label: str,
+        key_label: str,
+        trusted_key_id: str,
+        pin_env: str = "AWF_PKCS11_PIN",
+        key_object_id: bytes | None = None,
+        *,
+        _api: Any | None = None,
+    ):
+        if not module_path.strip():
+            raise ValueError("PKCS#11 module path must not be empty")
+        if not token_label.strip() or not key_label.strip():
+            raise ValueError("PKCS#11 token and key labels must not be empty")
+        if not KEY_ID_PATTERN.fullmatch(trusted_key_id):
+            raise ValueError("PKCS#11 trusted key_id must be sha256:<64 lowercase hex>")
+        if not pin_env.strip():
+            raise ValueError("PKCS#11 PIN environment variable name must not be empty")
+        self.module_path = module_path
+        self.token_label = token_label
+        self.key_label = key_label
+        self.pin_env = pin_env
+        self.key_object_id = key_object_id
+        self._key_id = trusted_key_id
+        self._api = _api
+
+    @property
+    def key_id(self) -> str:
+        return self._key_id
+
+    def _module(self) -> Any:
+        if self._api is not None:
+            return self._api
+        try:
+            self._api = importlib.import_module("pkcs11")
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "PKCS#11 signing requires the 'python-pkcs11' optional dependency"
+            ) from exc
+        return self._api
+
+    def sign(self, payload: bytes) -> bytes:
+        pin = os.environ.get(self.pin_env)
+        if pin is None or not pin:
+            raise RuntimeError(
+                f"PKCS#11 user PIN is missing from environment variable {self.pin_env}"
+            )
+        api = self._module()
+        library = api.lib(self.module_path)
+        token = library.get_token(token_label=self.token_label)
+        lookup: dict[str, Any] = {
+            "object_class": api.ObjectClass.PRIVATE_KEY,
+            "label": self.key_label,
+        }
+        if self.key_object_id is not None:
+            lookup["id"] = self.key_object_id
+        with token.open(user_pin=pin) as session:
+            private_key = session.get_key(**lookup)
+            signature = private_key.sign(payload, mechanism=api.Mechanism.EDDSA)
+        result = bytes(signature)
+        if len(result) != 64:
+            raise RuntimeError("PKCS#11 Ed25519 signature must be 64 bytes")
+        return result
 
 
 def canonical_json(value: Any) -> bytes:
@@ -71,6 +144,13 @@ def _b64decode(value: Any, label: str) -> bytes:
         raise ValueError(f"{label} is not valid base64") from exc
 
 
+def _provider_signature(provider: SigningProvider, statement: dict) -> str:
+    signature = bytes(provider.sign(canonical_json(statement)))
+    if len(signature) != 64:
+        raise ValueError("Ed25519 signing provider must return a 64-byte signature")
+    return _b64encode(signature)
+
+
 def _public_bytes(public_key: Ed25519PublicKey) -> bytes:
     return public_key.public_bytes(
         encoding=serialization.Encoding.Raw,
@@ -84,6 +164,10 @@ def key_id(public_key: Ed25519PublicKey) -> str:
 
 def artifact_digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def payload_digest(payload: bytes) -> str:
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
 def generate_signing_key(
@@ -127,6 +211,43 @@ def generate_signing_key(
         private_key_path.chmod(0o600)
     except OSError:
         pass
+    write_json(trust_store_path, trust)
+    return copy.deepcopy(record)
+
+
+def register_signing_public_key(
+    public_key_path: Path,
+    trust_store_path: Path,
+    publisher: str,
+    status: str = "active",
+) -> dict:
+    """Register an exported Ed25519 public key without importing private material."""
+
+    if not publisher.strip():
+        raise ValueError("publisher must not be empty")
+    if status not in KNOWN_KEY_STATUSES:
+        raise ValueError(f"Unknown trusted key status: {status}")
+    public_key = serialization.load_pem_public_key(public_key_path.read_bytes())
+    if not isinstance(public_key, Ed25519PublicKey):
+        raise ValueError("Registered signing public key must be Ed25519")
+    trust = (
+        read_json(trust_store_path)
+        if trust_store_path.is_file()
+        else {"schema_version": "1.0.0", "keys": []}
+    )
+    if trust.get("schema_version") != "1.0.0" or not isinstance(trust.get("keys"), list):
+        raise ValueError("Unsupported trust store")
+    record = {
+        "key_id": key_id(public_key),
+        "publisher": publisher,
+        "algorithm": ALGORITHM,
+        "status": status,
+        "public_key": _b64encode(_public_bytes(public_key)),
+    }
+    if any(item.get("key_id") == record["key_id"] for item in trust["keys"]):
+        raise ValueError(f"Trust store already contains key: {record['key_id']}")
+    trust["keys"].append(record)
+    trust["keys"].sort(key=lambda item: item["key_id"])
     write_json(trust_store_path, trust)
     return copy.deepcopy(record)
 
@@ -211,10 +332,41 @@ def sign_artifact_with_provider(
     }
     envelope = {
         "statement": statement,
-        "signature": _b64encode(provider.sign(canonical_json(statement))),
+        "signature": _provider_signature(provider, statement),
     }
     write_json(signature_path, envelope)
     return copy.deepcopy(envelope)
+
+
+def sign_json_value(
+    value: Any,
+    subject_name: str,
+    provider: SigningProvider,
+    publisher: str,
+    issued_at: str | None = None,
+) -> dict:
+    """Create an embedded detached-style envelope for one canonical JSON value."""
+
+    if not subject_name.strip():
+        raise ValueError("Signature subject name must not be empty")
+    payload = canonical_json(value)
+    statement = {
+        "schema_version": "1.0.0",
+        "subject": {
+            "name": subject_name,
+            "digest": payload_digest(payload),
+            "media_type": "application/json",
+        },
+        "publisher": publisher,
+        "key_id": provider.key_id,
+        "algorithm": ALGORITHM,
+        "canonicalization": CANONICALIZATION,
+        "issued_at": issued_at or datetime.now(timezone.utc).isoformat(),
+    }
+    return {
+        "statement": statement,
+        "signature": _provider_signature(provider, statement),
+    }
 
 
 def _trusted_key(trust_store: dict, wanted_key_id: str, publisher: str) -> Ed25519PublicKey:
@@ -339,6 +491,72 @@ def verify_artifact(
     return _verify_envelope(
         artifact_path, signature_path, expected_publisher, resolve
     )
+
+
+def verify_json_value(
+    value: Any,
+    envelope: Any,
+    subject_name: str,
+    trust_store_path: Path,
+    expected_publisher: str,
+) -> dict:
+    """Verify a canonical JSON value against an embedded signature envelope."""
+
+    if not isinstance(envelope, dict) or set(envelope) != {"statement", "signature"}:
+        raise ValueError("Signature envelope must contain exactly statement and signature")
+    statement = envelope.get("statement")
+    if not isinstance(statement, dict) or set(statement) != {
+        "schema_version",
+        "subject",
+        "publisher",
+        "key_id",
+        "algorithm",
+        "canonicalization",
+        "issued_at",
+    }:
+        raise ValueError("Signature statement has an invalid shape")
+    if statement.get("schema_version") != "1.0.0":
+        raise ValueError("Unsupported signature statement schema_version")
+    if statement.get("algorithm") != ALGORITHM:
+        raise ValueError("Signature algorithm must be Ed25519")
+    if statement.get("canonicalization") != CANONICALIZATION:
+        raise ValueError("Unsupported signature canonicalization")
+    if statement.get("publisher") != expected_publisher:
+        raise ValueError("Artifact publisher differs from the required publisher")
+    subject = statement.get("subject")
+    if not isinstance(subject, dict) or set(subject) != {"name", "digest", "media_type"}:
+        raise ValueError("Signature subject has an invalid shape")
+    if subject.get("name") != subject_name:
+        raise ValueError("Signature subject name differs from JSON value")
+    if subject.get("media_type") != "application/json":
+        raise ValueError("Signature subject media_type must be application/json")
+    actual_digest = payload_digest(canonical_json(value))
+    if subject.get("digest") != actual_digest:
+        raise ValueError("JSON value digest does not match signature subject")
+    trust_store = read_json(trust_store_path)
+    public_key = _trusted_key(
+        trust_store, statement.get("key_id"), expected_publisher
+    )
+    signature = _b64decode(envelope.get("signature"), "signature")
+    if len(signature) != 64:
+        raise ValueError("Ed25519 signature must be 64 bytes")
+    try:
+        public_key.verify(signature, canonical_json(statement))
+    except InvalidSignature as exc:
+        raise ValueError("JSON value signature verification failed") from exc
+    status = next(
+        item["status"]
+        for item in trust_store["keys"]
+        if item["key_id"] == statement["key_id"]
+    )
+    return {
+        "result": "PASS",
+        "artifact": subject_name,
+        "digest": actual_digest,
+        "publisher": expected_publisher,
+        "key_id": statement["key_id"],
+        "key_status": status,
+    }
 
 
 def verify_trust_store(

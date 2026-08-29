@@ -18,11 +18,13 @@ Adapter 或人工关卡通过提交结构化事实更新来完成动作节点。
 2. 一条包含结果状态的 `state.checkpointed` 事件；
 3. 一个位于 `runtime/checkpoints/<run-id>.json` 的逻辑检查点。
 
-事件以追加方式写入 `runtime/events/<run-id>.jsonl`。每条事件都包含 `seq`、`prev_hash` 和 `event_hash`，共同形成 SHA-256 哈希链。重放会验证事件序号、前后链接、事件哈希，以及最后一份事件状态与检查点文件是否一致。
+开发模式可以把事件追加到 `runtime/events/<run-id>.jsonl`。v1.0 生产模式使用 SQLite WAL 与写事务，原子分配 `seq` 并追加事件；可配置运行租约，阻止多个 Worker 同时推进同一个 `run_id`。
+
+每条事件都包含 `seq`、`prev_hash` 和 `event_hash`，共同形成 SHA-256 哈希链。启用 `RuntimeIntegrityPolicy` 后，每条事件还包含由独立运行发布者生成的 Ed25519 签名；检查点文件对应一个 `.sig.json` 分离签名，并通过 `trajectory_head` 引用已验证事件链。重放会验证事件序号、前后链接、事件哈希、事件签名、检查点签名、轨迹头，以及最后一份事件状态与检查点文件是否一致。
 
 v0.7 起，检查点还包含 `budget_usage`，分别按全运行、Agent 和节点累计模型回合、Token 与 Tool 调用。每次预算消费生成 `budget.consumed`；超限生成 `budget.exhausted` 并进入升级态，因此恢复和重放不会遗忘已经发生的模型或 Tool 尝试。
 
-该机制可以发现意外修改或未授权篡改，但不能替代带签名的事件或生产级不可变存储。
+签名机制能够发现攻击者修改事件后重新计算哈希链的行为。完整目录被替换为一份更早但签名仍有效的备份时，仍需要外部不可回滚时间戳、透明日志或远程审计锚识别回滚。
 
 ## 状态机
 
@@ -44,4 +46,4 @@ v0.7 起，检查点还包含 `budget_usage`，分别按全运行、Agent 和节
 python scripts/run_runtime_example.py
 ```
 
-集成测试可以使用 `scripts/workflowctl.py` 提供的 `runtime-start`、`runtime-route`、`runtime-complete`、`runtime-pause`、`runtime-resume` 和 `runtime-replay` 命令。事实更新通过 JSON 文件提交，确保自由文本模型输出不会直接进入可信路由边界。
+集成测试可以使用 `scripts/workflowctl.py` 提供的 `runtime-start`、`runtime-route`、`runtime-complete`、`runtime-pause`、`runtime-resume`、`runtime-replay` 和 `runtime-purge` 命令。事实更新通过 JSON 文件提交，确保自由文本模型输出不会直接进入可信路由边界。签名与 SQLite 参数参见 [`deepseek-readonly-v1.0.md`](deepseek-readonly-v1.0.md)。

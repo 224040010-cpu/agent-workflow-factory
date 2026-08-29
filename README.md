@@ -38,12 +38,13 @@
 - DeepSeek v0.7 治理：Tool Binding 输入/输出 Schema、实现摘要、按 Agent/节点预算记账与超限升级。
 - DeepSeek v0.8 信任链：Ed25519 分离签名、公钥信任库、密钥轮换状态与执行前强制验签。
 - DeepSeek v0.9 全包信任：BPMN/Graph/Agent/Policy/Lock 全清单签名、离线根签名和可插拔签名 Provider。
+- DeepSeek v1.0 生产信任：PKCS#11 Ed25519 HSM Provider、逐事件签名、检查点签名、SQLite 原子事件存储、运行租约和终止记录保留策略。
 
-尚未实现：理解任意自由文本的模型解释器、生产级调度器与会话存储、DeepSeek 人工审批和定时循环绑定、具体云 KMS/HSM 驱动、带签名的事件存储、补偿事务和交互式可视化界面。
+尚未实现：理解任意自由文本的模型解释器、跨主机生产调度器、DeepSeek 人工审批和定时循环绑定、非 PKCS#11 云 KMS 驱动、外部不可回滚时间戳锚、补偿事务和交互式可视化界面。
 
 ## 快速评审
 
-需要 Python 3.11 或更高版本。v0.8 的签名层使用 `cryptography`，安装仓库后即可获得依赖：`python -m pip install -e .`。
+需要 Python 3.11 或更高版本。基础 Ed25519 签名层使用 `cryptography`；连接 PKCS#11 HSM 时安装可选依赖：`python -m pip install -e '.[pkcs11]'`。
 
 ```bash
 python scripts/workflowctl.py verify-definition
@@ -96,4 +97,4 @@ python -m unittest discover -s tests -v
 - Registry 状态变更；
 - 运行期间从持续变化的 Git 分支动态发现能力。
 
-自然语言输入格式和返回文件参见 [`docs/business-text-to-diagram.md`](docs/business-text-to-diagram.md)。架构和运行时评审细节参见 [`docs/architecture.md`](docs/architecture.md)、[`docs/reference-runtime.md`](docs/reference-runtime.md)、[`docs/deepseek-readonly-mvp.md`](docs/deepseek-readonly-mvp.md)、[`docs/deepseek-readonly-multinode.md`](docs/deepseek-readonly-multinode.md)、[`docs/deepseek-readonly-v0.7.md`](docs/deepseek-readonly-v0.7.md)、[`docs/deepseek-readonly-v0.8.md`](docs/deepseek-readonly-v0.8.md)、[`docs/deepseek-readonly-v0.9.md`](docs/deepseek-readonly-v0.9.md) 和双仓共享的总定义。
+自然语言输入格式和返回文件参见 [`docs/business-text-to-diagram.md`](docs/business-text-to-diagram.md)。架构和运行时评审细节参见 [`docs/architecture.md`](docs/architecture.md)、[`docs/reference-runtime.md`](docs/reference-runtime.md)、[`docs/deepseek-readonly-mvp.md`](docs/deepseek-readonly-mvp.md)、[`docs/deepseek-readonly-multinode.md`](docs/deepseek-readonly-multinode.md)、[`docs/deepseek-readonly-v0.7.md`](docs/deepseek-readonly-v0.7.md)、[`docs/deepseek-readonly-v0.8.md`](docs/deepseek-readonly-v0.8.md)、[`docs/deepseek-readonly-v0.9.md`](docs/deepseek-readonly-v0.9.md)、[`docs/deepseek-readonly-v1.0.md`](docs/deepseek-readonly-v1.0.md) 和双仓共享的总定义。

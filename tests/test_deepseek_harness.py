@@ -31,8 +31,12 @@ from workflow_factory.deepseek_harness import (  # noqa: E402
     builtin_readonly_tool_bindings,
     harness_usage,
 )
-from workflow_factory.reference_runtime import ReferenceRuntime  # noqa: E402
+from workflow_factory.reference_runtime import (  # noqa: E402
+    ReferenceRuntime,
+    RuntimeIntegrityPolicy,
+)
 from workflow_factory.signing import (  # noqa: E402
+    FileEd25519SigningProvider,
     generate_root_key,
     generate_signing_key,
     sign_artifact,
@@ -121,7 +125,7 @@ def malformed_parse_output(descriptor: dict, request: dict, idempotency_key: str
     return {"facts": {"intent": {"parsed": "yes"}}, "evidence": []}
 
 
-def prepare_test_trust(root: Path) -> tuple[Path, DeepSeekTrustPolicy]:
+def prepare_test_trust(root: Path) -> tuple[Path, Path, DeepSeekTrustPolicy]:
     trust_store = root / "trusted-publishers.json"
     shutil.copyfile(ROOT / "trust/trusted-publishers.json", trust_store)
     private_key = root / "build-signing-key.pem"
@@ -129,6 +133,12 @@ def prepare_test_trust(root: Path) -> tuple[Path, DeepSeekTrustPolicy]:
         private_key,
         trust_store,
         "agent-workflow-factory-build",
+    )
+    runtime_private_key = root / "runtime-signing-key.pem"
+    generate_signing_key(
+        runtime_private_key,
+        trust_store,
+        "agent-workflow-factory-runtime",
     )
     root_private = root / "trust-root.pem"
     root_public = root / "trust-root-public.json"
@@ -140,7 +150,7 @@ def prepare_test_trust(root: Path) -> tuple[Path, DeepSeekTrustPolicy]:
         trust_signature,
         "agent-workflow-factory-trust-root",
     )
-    return private_key, DeepSeekTrustPolicy(
+    return private_key, runtime_private_key, DeepSeekTrustPolicy(
         trust_store=trust_store,
         trust_store_signature=trust_signature,
         trust_root_public_key=root_public,
@@ -158,7 +168,9 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
         self.package = self.root / "package"
         self.runtime_dir = self.root / "runtime"
         self.business = ROOT / "examples/deepseek-readonly/business-requirement.json"
-        self.private_key, self.trust_policy = prepare_test_trust(self.root)
+        self.private_key, self.runtime_private_key, self.trust_policy = prepare_test_trust(
+            self.root
+        )
         bpmn = self.root / "process.bpmn"
         generate_bpmn(self.business, bpmn)
         compile_package(
@@ -176,7 +188,21 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
 
     def runner(self, adapter: DeepSeekReadonlyAdapter) -> DeepSeekReadonlyRunner:
         return DeepSeekReadonlyRunner(
-            self.package, self.runtime_dir, adapter, self.trust_policy
+            self.package,
+            self.runtime_dir,
+            adapter,
+            self.trust_policy,
+            FileEd25519SigningProvider(self.runtime_private_key),
+        )
+
+    def inspect_runtime(self) -> ReferenceRuntime:
+        return ReferenceRuntime(
+            self.package,
+            self.runtime_dir,
+            RuntimeIntegrityPolicy(
+                trust_store=self.trust_policy.trust_store,
+                require_signatures=True,
+            ),
         )
 
     def resign_package(self) -> None:
@@ -194,9 +220,13 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
         self.assertEqual(report["status"], "completed")
         self.assertEqual(report["replay"], "PASS")
         self.assertEqual(len(client.calls), 1)
-        runtime = ReferenceRuntime(self.package, self.runtime_dir)
+        runtime = self.inspect_runtime()
         self.assertTrue(runtime.load_state("run-e2e")["facts"]["intent"]["parsed"])
         event_types = [item["type"] for item in runtime.events.read("run-e2e")]
+        self.assertTrue(
+            all("signature" in item for item in runtime.events.read("run-e2e"))
+        )
+        self.assertTrue(runtime.checkpoint_signature_path("run-e2e").is_file())
         self.assertIn("tool.observation.accepted", event_types)
         self.assertIn("agent.turn.completed", event_types)
         self.assertIn("facts.verified", event_types)
@@ -219,6 +249,17 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
                 self.runtime_dir,
                 DeepSeekReadonlyAdapter(client=client),
             ).run(self.facts, run_id="run-no-trust")
+        self.assertEqual(client.calls, [])
+
+    def test_requires_runtime_signer_before_model(self) -> None:
+        client = FakeHarnessClient()
+        with self.assertRaisesRegex(ValueError, "requires a runtime signing provider"):
+            DeepSeekReadonlyRunner(
+                self.package,
+                self.runtime_dir,
+                DeepSeekReadonlyAdapter(client=client),
+                self.trust_policy,
+            ).run(self.facts, run_id="run-no-runtime-signer")
         self.assertEqual(client.calls, [])
 
     def test_rejects_unsigned_registry_lock_tampering_before_model(self) -> None:
@@ -497,7 +538,9 @@ class DeepSeekReadonlyMultinodeTest(unittest.TestCase):
         self.package = self.root / "package"
         self.runtime_dir = self.root / "runtime"
         self.business = ROOT / "examples/deepseek-readonly-multinode/business-requirement.json"
-        self.private_key, self.trust_policy = prepare_test_trust(self.root)
+        self.private_key, self.runtime_private_key, self.trust_policy = prepare_test_trust(
+            self.root
+        )
         bpmn = self.root / "process.bpmn"
         generate_bpmn(self.business, bpmn)
         report = compile_package(
@@ -519,7 +562,21 @@ class DeepSeekReadonlyMultinodeTest(unittest.TestCase):
 
     def runner(self, adapter: DeepSeekReadonlyAdapter) -> DeepSeekReadonlyRunner:
         return DeepSeekReadonlyRunner(
-            self.package, self.runtime_dir, adapter, self.trust_policy
+            self.package,
+            self.runtime_dir,
+            adapter,
+            self.trust_policy,
+            FileEd25519SigningProvider(self.runtime_private_key),
+        )
+
+    def inspect_runtime(self) -> ReferenceRuntime:
+        return ReferenceRuntime(
+            self.package,
+            self.runtime_dir,
+            RuntimeIntegrityPolicy(
+                trust_store=self.trust_policy.trust_store,
+                require_signatures=True,
+            ),
         )
 
     def test_two_agents_and_tools_route_clear_description_to_ready(self) -> None:
@@ -531,7 +588,7 @@ class DeepSeekReadonlyMultinodeTest(unittest.TestCase):
         self.assertEqual(report["result"], "PASS")
         self.assertEqual(report["completed_actions"], 2)
         self.assertEqual(len(client.calls), 2)
-        runtime = ReferenceRuntime(self.package, self.runtime_dir)
+        runtime = self.inspect_runtime()
         state = runtime.load_state("run-multinode-ready")
         self.assertEqual(state["current_node"], "ready")
         self.assertFalse(state["facts"]["analysis"]["ambiguous"])
@@ -549,9 +606,7 @@ class DeepSeekReadonlyMultinodeTest(unittest.TestCase):
         )
 
         self.assertEqual(report["result"], "PASS")
-        state = ReferenceRuntime(self.package, self.runtime_dir).load_state(
-            "run-multinode-ambiguous"
-        )
+        state = self.inspect_runtime().load_state("run-multinode-ambiguous")
         self.assertEqual(state["current_node"], "needs-clarification")
         self.assertTrue(state["facts"]["analysis"]["ambiguous"])
         self.assertEqual(
@@ -587,7 +642,7 @@ class DeepSeekReadonlyHarnessLiveTest(unittest.TestCase):
             package = root / "package"
             bpmn = root / "process.bpmn"
             business = ROOT / "examples/deepseek-readonly/business-requirement.json"
-            private_key, trust_policy = prepare_test_trust(root)
+            private_key, runtime_private_key, trust_policy = prepare_test_trust(root)
             generate_bpmn(business, bpmn)
             compile_package(
                 bpmn,
@@ -607,7 +662,11 @@ class DeepSeekReadonlyHarnessLiveTest(unittest.TestCase):
             )
             try:
                 report = DeepSeekReadonlyRunner(
-                    package, runtime_dir, adapter, trust_policy
+                    package,
+                    runtime_dir,
+                    adapter,
+                    trust_policy,
+                    FileEd25519SigningProvider(runtime_private_key),
                 ).run(
                     read_json(ROOT / "examples/deepseek-readonly/initial-facts.json"),
                     run_id="run-live-smoke",
@@ -630,7 +689,7 @@ class DeepSeekReadonlyMultinodeLiveTest(unittest.TestCase):
             bpmn = root / "process.bpmn"
             example = ROOT / "examples/deepseek-readonly-multinode"
             business = example / "business-requirement.json"
-            private_key, trust_policy = prepare_test_trust(root)
+            private_key, runtime_private_key, trust_policy = prepare_test_trust(root)
             generate_bpmn(business, bpmn)
             compile_package(
                 bpmn,
@@ -650,7 +709,11 @@ class DeepSeekReadonlyMultinodeLiveTest(unittest.TestCase):
             )
             try:
                 report = DeepSeekReadonlyRunner(
-                    package, runtime_dir, adapter, trust_policy
+                    package,
+                    runtime_dir,
+                    adapter,
+                    trust_policy,
+                    FileEd25519SigningProvider(runtime_private_key),
                 ).run(
                     read_json(example / "initial-facts.json"),
                     run_id="run-multinode-live",

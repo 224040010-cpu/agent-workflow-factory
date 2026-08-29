@@ -12,6 +12,7 @@
     "type": {"type": "string", "minLength": 1},
     "prev_hash": {"type": ["string", "null"]},
     "payload": {"type": "object"},
-    "event_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    "event_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "signature": {"$ref": "artifact-signature.schema.json"}
   }
 }

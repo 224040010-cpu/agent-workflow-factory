@@ -5,15 +5,23 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+
+from cryptography.hazmat.primitives import serialization
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from workflow_factory.signing import (  # noqa: E402
+    FileEd25519SigningProvider,
+    Pkcs11Ed25519SigningProvider,
     generate_root_key,
     generate_signing_key,
+    load_private_key,
+    register_signing_public_key,
     sign_artifact,
+    sign_json_value,
     verify_artifact,
     verify_trust_store,
 )
@@ -185,6 +193,119 @@ class ArtifactSigningTest(unittest.TestCase):
         write_json(self.trust_store, trust)
         with self.assertRaisesRegex(ValueError, "digest does not match"):
             verify_trust_store(self.trust_store, trust_signature, root_public)
+
+    def test_pkcs11_provider_uses_token_key_without_exporting_private_material(self) -> None:
+        delegate = FileEd25519SigningProvider(self.private_key)
+        calls: dict[str, object] = {}
+
+        class FakePrivateKey:
+            def sign(self, payload: bytes, mechanism: object) -> bytes:
+                calls["payload"] = payload
+                calls["mechanism"] = mechanism
+                return delegate.sign(payload)
+
+        class FakeSession:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args) -> None:
+                return None
+
+            def get_key(self, **lookup):
+                calls["lookup"] = lookup
+                return FakePrivateKey()
+
+        class FakeToken:
+            def open(self, user_pin: str):
+                calls["pin"] = user_pin
+                return FakeSession()
+
+        class FakeLibrary:
+            def get_token(self, token_label: str):
+                calls["token_label"] = token_label
+                return FakeToken()
+
+        class FakeApi:
+            class ObjectClass:
+                PRIVATE_KEY = "private-key"
+
+            class Mechanism:
+                EDDSA = "eddsa"
+
+            @staticmethod
+            def lib(module_path: str):
+                calls["module_path"] = module_path
+                return FakeLibrary()
+
+        provider = Pkcs11Ed25519SigningProvider(
+            "/opt/vendor/libpkcs11.so",
+            "workflow-token",
+            "runtime-key",
+            self.record["key_id"],
+            key_object_id=b"\x01",
+            _api=FakeApi(),
+        )
+        with patch.dict("os.environ", {"AWF_PKCS11_PIN": "test-pin"}):
+            signature = provider.sign(b"runtime-evidence")
+        self.assertEqual(len(signature), 64)
+        self.assertEqual(provider.key_id, self.record["key_id"])
+        self.assertEqual(calls["module_path"], "/opt/vendor/libpkcs11.so")
+        self.assertEqual(calls["token_label"], "workflow-token")
+        self.assertEqual(calls["pin"], "test-pin")
+        self.assertEqual(
+            calls["lookup"],
+            {"object_class": "private-key", "label": "runtime-key", "id": b"\x01"},
+        )
+        self.assertEqual(calls["mechanism"], "eddsa")
+
+    def test_pkcs11_provider_requires_pin_from_environment(self) -> None:
+        provider = Pkcs11Ed25519SigningProvider(
+            "/opt/vendor/libpkcs11.so",
+            "workflow-token",
+            "runtime-key",
+            self.record["key_id"],
+            pin_env="AWF_TEST_MISSING_PIN",
+            _api=object(),
+        )
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "PIN is missing"):
+                provider.sign(b"payload")
+
+    def test_registers_exported_hsm_public_key_without_private_key(self) -> None:
+        public_path = self.root / "exported-public.pem"
+        public_path.write_bytes(
+            load_private_key(self.private_key)
+            .public_key()
+            .public_bytes(
+                serialization.Encoding.PEM,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+        )
+        second_trust = self.root / "hsm-trust.json"
+        record = register_signing_public_key(
+            public_path,
+            second_trust,
+            "agent-workflow-factory-runtime",
+        )
+        self.assertEqual(record["key_id"], self.record["key_id"])
+        self.assertFalse((self.root / "hsm-private.pem").exists())
+
+    def test_signing_provider_must_return_ed25519_length(self) -> None:
+        class InvalidProvider:
+            key_id = self.record["key_id"]
+
+            @staticmethod
+            def sign(payload: bytes) -> bytes:
+                del payload
+                return b"x" * 63
+
+        with self.assertRaisesRegex(ValueError, "64-byte signature"):
+            sign_json_value(
+                {"runtime": "evidence"},
+                "runtime.json",
+                InvalidProvider(),
+                "agent-workflow-factory-runtime",
+            )
 
 
 if __name__ == "__main__":
