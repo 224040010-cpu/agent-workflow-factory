@@ -56,6 +56,23 @@ class RuntimeIntegrityPolicy:
     def require_write_signer(self) -> SigningProvider:
         if self.signing_provider is None:
             raise ValueError("Signed runtime mutation requires a runtime signing provider")
+        trust_store = read_json(self.require_verifier())
+        keys = trust_store.get("keys") if isinstance(trust_store, dict) else None
+        if not isinstance(keys, list):
+            raise ValueError("Runtime trust store has an invalid shape")
+        matching = [
+            item
+            for item in keys
+            if isinstance(item, dict)
+            and item.get("key_id") == self.signing_provider.key_id
+            and item.get("publisher") == self.publisher
+        ]
+        if not matching:
+            raise ValueError(
+                "Runtime signing key is not registered for the required publisher"
+            )
+        if matching[0].get("status") != "active":
+            raise ValueError("New runtime evidence requires an active signing key")
         return self.signing_provider
 
     def require_verifier(self) -> Path:
@@ -150,7 +167,7 @@ class JsonlEventStore:
         previous: list[dict],
     ) -> dict:
         provider = self.integrity.signing_provider
-        if self.integrity.require_signatures:
+        if self.integrity.require_signatures or provider is not None:
             provider = self.integrity.require_write_signer()
         prev_hash = previous[-1]["event_hash"] if previous else None
         event = {

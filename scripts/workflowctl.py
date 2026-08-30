@@ -13,6 +13,12 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from workflow_factory.business import generate_bpmn  # noqa: E402
 from workflow_factory.compiler import compile_package  # noqa: E402
+from workflow_factory.complexity_profiles import (  # noqa: E402
+    PROFILES,
+    profiles_report,
+    resolve_runtime_options,
+    validate_runtime_material,
+)
 from workflow_factory.deepseek_harness import (  # noqa: E402
     DeepSeekHarnessSettings,
     DeepSeekReadonlyAdapter,
@@ -103,7 +109,14 @@ def signing_provider_from_args(
 def add_runtime_integrity_arguments(
     parser: argparse.ArgumentParser,
     include_signer: bool = True,
+    default_profile: str = "dev",
 ) -> None:
+    parser.add_argument(
+        "--profile",
+        choices=list(PROFILES),
+        default=default_profile,
+        help="复杂度预设：dev、team 或 regulated",
+    )
     if include_signer:
         parser.add_argument("--runtime-signing-key", type=Path)
         add_pkcs11_arguments(parser, "runtime")
@@ -115,35 +128,65 @@ def add_runtime_integrity_arguments(
     )
     parser.add_argument("--require-runtime-signatures", action="store_true")
     parser.add_argument("--require-runtime-trust-root", action="store_true")
-    parser.add_argument("--event-store", choices=["jsonl", "sqlite"], default="jsonl")
+    parser.add_argument("--event-store", choices=["jsonl", "sqlite"])
     parser.add_argument("--lease-owner")
-    parser.add_argument("--lease-ttl-seconds", type=int, default=30)
-    parser.add_argument("--retention-days", type=int, default=90)
+    parser.add_argument("--lease-ttl-seconds", type=int)
+    parser.add_argument("--retention-days", type=int)
 
 
 def reference_runtime_from_args(args: argparse.Namespace) -> ReferenceRuntime:
+    provider = signing_provider_from_args(args, "runtime")
+    options = resolve_runtime_options(
+        args.profile,
+        event_store=args.event_store,
+        require_runtime_signatures=args.require_runtime_signatures,
+        require_runtime_trust_root=args.require_runtime_trust_root,
+        lease_owner=args.lease_owner,
+        lease_ttl_seconds=args.lease_ttl_seconds,
+        retention_days=args.retention_days,
+    )
+    validate_runtime_material(
+        options,
+        signing_provider=provider,
+        trust_store=args.runtime_trust_store,
+        trust_store_signature=args.runtime_trust_store_signature,
+        trust_root_public_key=args.runtime_trust_root_public_key,
+        mutating=args.command not in {"runtime-replay", "runtime-purge"},
+        publisher=args.runtime_publisher,
+    )
     return ReferenceRuntime(
         args.package,
         args.runtime_dir,
         RuntimeIntegrityPolicy(
-            signing_provider=signing_provider_from_args(args, "runtime"),
+            signing_provider=provider,
             trust_store=args.runtime_trust_store,
             trust_store_signature=args.runtime_trust_store_signature,
             trust_root_public_key=args.runtime_trust_root_public_key,
             publisher=args.runtime_publisher,
-            require_signatures=args.require_runtime_signatures,
-            require_rooted_trust=args.require_runtime_trust_root,
+            require_signatures=options.require_runtime_signatures,
+            require_rooted_trust=options.require_runtime_trust_root,
         ),
-        event_store_backend=args.event_store,
-        lease_owner=args.lease_owner,
-        lease_ttl_seconds=args.lease_ttl_seconds,
-        retention_days=args.retention_days,
+        event_store_backend=options.event_store,
+        lease_owner=options.lease_owner,
+        lease_ttl_seconds=options.lease_ttl_seconds,
+        retention_days=options.retention_days,
     )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="workflowctl")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    profile_show = subparsers.add_parser("profile-show")
+    profile_show.add_argument("profile", nargs="?", choices=list(PROFILES))
+
+    profile_check = subparsers.add_parser("profile-check")
+    add_runtime_integrity_arguments(profile_check)
+    profile_check.add_argument(
+        "--read-only",
+        action="store_true",
+        help="只检查重放/审计材料，不要求运行签名私钥",
+    )
 
     verify = subparsers.add_parser("verify-definition")
     verify.add_argument(
@@ -316,14 +359,55 @@ def main() -> int:
     run_command.add_argument(
         "--runtime-publisher", default="agent-workflow-factory-runtime"
     )
-    run_command.add_argument("--event-store", choices=["jsonl", "sqlite"], default="sqlite")
-    run_command.add_argument("--lease-owner", default="workflowctl-deepseek")
-    run_command.add_argument("--lease-ttl-seconds", type=int, default=30)
-    run_command.add_argument("--retention-days", type=int, default=90)
+    run_command.add_argument(
+        "--profile", choices=list(PROFILES), default="regulated"
+    )
+    run_command.add_argument("--event-store", choices=["jsonl", "sqlite"])
+    run_command.add_argument("--lease-owner")
+    run_command.add_argument("--lease-ttl-seconds", type=int)
+    run_command.add_argument("--retention-days", type=int)
 
     args = parser.parse_args()
     try:
-        if args.command == "verify-definition":
+        if args.command == "profile-show":
+            report = profiles_report()
+            if args.profile:
+                report = {args.profile: report[args.profile]}
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        elif args.command == "profile-check":
+            provider = signing_provider_from_args(args, "runtime")
+            options = resolve_runtime_options(
+                args.profile,
+                event_store=args.event_store,
+                require_runtime_signatures=args.require_runtime_signatures,
+                require_runtime_trust_root=args.require_runtime_trust_root,
+                lease_owner=args.lease_owner,
+                lease_ttl_seconds=args.lease_ttl_seconds,
+                retention_days=args.retention_days,
+            )
+            validate_runtime_material(
+                options,
+                signing_provider=provider,
+                trust_store=args.runtime_trust_store,
+                trust_store_signature=args.runtime_trust_store_signature,
+                trust_root_public_key=args.runtime_trust_root_public_key,
+                mutating=not args.read_only,
+                publisher=args.runtime_publisher,
+            )
+            if options.require_runtime_trust_root:
+                verify_trust_store(
+                    args.runtime_trust_store,
+                    args.runtime_trust_store_signature,
+                    args.runtime_trust_root_public_key,
+                )
+            print(
+                json.dumps(
+                    {"result": "PASS", "runtime_profile": options.as_dict()},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        elif args.command == "verify-definition":
             verify_definition(args.definition, args.checksum)
         elif args.command == "generate-bpmn":
             generate_bpmn(args.business, args.output)
@@ -436,6 +520,23 @@ def main() -> int:
             count = runtime.purge_expired_runs()
             print(f"Purged terminal runtime records: {count}")
         elif args.command == "run":
+            runtime_provider = signing_provider_from_args(args, "runtime")
+            runtime_options = resolve_runtime_options(
+                args.profile,
+                event_store=args.event_store,
+                lease_owner=args.lease_owner,
+                lease_ttl_seconds=args.lease_ttl_seconds,
+                retention_days=args.retention_days,
+            )
+            validate_runtime_material(
+                runtime_options,
+                signing_provider=runtime_provider,
+                trust_store=args.trust_store,
+                trust_store_signature=args.trust_store_signature,
+                trust_root_public_key=args.trust_root_public_key,
+                mutating=True,
+                publisher=args.runtime_publisher,
+            )
             settings = DeepSeekHarnessSettings(
                 provider=args.provider,
                 model=args.model,
@@ -458,18 +559,26 @@ def main() -> int:
                         binding_manifest=args.binding_manifest,
                         binding_signature=args.binding_signature,
                     ),
-                    runtime_signing_provider=signing_provider_from_args(args, "runtime"),
+                    runtime_signing_provider=runtime_provider,
                     runtime_publisher=args.runtime_publisher,
-                    event_store_backend=args.event_store,
-                    lease_owner=args.lease_owner,
-                    lease_ttl_seconds=args.lease_ttl_seconds,
-                    retention_days=args.retention_days,
+                    event_store_backend=runtime_options.event_store,
+                    lease_owner=runtime_options.lease_owner,
+                    lease_ttl_seconds=runtime_options.lease_ttl_seconds,
+                    retention_days=runtime_options.retention_days,
+                    require_runtime_signatures=(
+                        runtime_options.require_runtime_signatures
+                    ),
+                    require_runtime_rooted_trust=(
+                        runtime_options.require_runtime_trust_root
+                    ),
                 ).run(
                     read_json(args.facts) if args.facts else {},
                     run_id=args.run_id,
                 )
             finally:
                 adapter.close()
+            report["complexity_profile"] = runtime_options.profile.name
+            report["runtime_profile"] = runtime_options.as_dict()
             print(json.dumps(report, ensure_ascii=False, indent=2))
             if report["result"] != "PASS":
                 return 1

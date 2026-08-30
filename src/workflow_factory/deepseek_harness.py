@@ -772,6 +772,8 @@ class DeepSeekReadonlyRunner:
         lease_owner: str | None = None,
         lease_ttl_seconds: int = 30,
         retention_days: int = 90,
+        require_runtime_signatures: bool = True,
+        require_runtime_rooted_trust: bool = True,
     ):
         self.adapter = adapter
         self.trust_policy = trust_policy
@@ -783,17 +785,19 @@ class DeepSeekReadonlyRunner:
                 trust_store=trust_policy.trust_store if trust_policy is not None else None,
                 trust_store_signature=(
                     trust_policy.trust_store_signature
-                    if trust_policy is not None
+                    if trust_policy is not None and require_runtime_rooted_trust
                     else None
                 ),
                 trust_root_public_key=(
                     trust_policy.trust_root_public_key
-                    if trust_policy is not None
+                    if trust_policy is not None and require_runtime_rooted_trust
                     else None
                 ),
                 publisher=runtime_publisher,
-                require_signatures=True,
-                require_rooted_trust=trust_policy is not None,
+                require_signatures=require_runtime_signatures,
+                require_rooted_trust=(
+                    require_runtime_rooted_trust and trust_policy is not None
+                ),
             ),
             event_store_backend=event_store_backend,
             lease_owner=lease_owner,
@@ -879,7 +883,8 @@ class DeepSeekReadonlyRunner:
     ) -> dict:
         signature_reports = self._verify_signatures()
         self._verify_capabilities()
-        self.runtime.integrity.require_write_signer()
+        if self.runtime.integrity.require_signatures:
+            self.runtime.integrity.require_write_signer()
         run_id = run_id or "run-deepseek-readonly"
         checkpoint = self.runtime.checkpoint_path(run_id)
         if checkpoint.exists():

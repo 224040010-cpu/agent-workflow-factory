@@ -262,6 +262,27 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
             ).run(self.facts, run_id="run-no-runtime-signer")
         self.assertEqual(client.calls, [])
 
+    def test_explicit_dev_profile_can_run_without_runtime_signatures(self) -> None:
+        client = FakeHarnessClient()
+        report = DeepSeekReadonlyRunner(
+            self.package,
+            self.runtime_dir,
+            DeepSeekReadonlyAdapter(client=client),
+            self.trust_policy,
+            require_runtime_signatures=False,
+            require_runtime_rooted_trust=False,
+        ).run(self.facts, run_id="run-dev-profile")
+
+        self.assertEqual(report["result"], "PASS")
+        runtime = ReferenceRuntime(self.package, self.runtime_dir)
+        self.assertTrue(runtime.events.read("run-dev-profile"))
+        self.assertTrue(
+            all("signature" not in event for event in runtime.events.read("run-dev-profile"))
+        )
+        self.assertFalse(
+            runtime.checkpoint_signature_path("run-dev-profile").exists()
+        )
+
     def test_rejects_unsigned_registry_lock_tampering_before_model(self) -> None:
         lock = read_json(self.package / "registry.lock.json")
         lock["catalog_digest"] = "sha256:" + "0" * 64

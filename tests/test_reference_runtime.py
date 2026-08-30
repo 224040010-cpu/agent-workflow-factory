@@ -245,6 +245,16 @@ class ReferenceRuntimeTest(unittest.TestCase):
             runtime.start(run_id="run-missing-signer")
         self.assertFalse(runtime.events.path("run-missing-signer").exists())
 
+    def test_runtime_api_rejects_retired_key_for_new_evidence(self) -> None:
+        trust = read_json(self.runtime_trust)
+        trust["keys"][0]["status"] = "retired"
+        write_json(self.runtime_trust, trust)
+        runtime = self.signed_runtime()
+
+        with self.assertRaisesRegex(ValueError, "active signing key"):
+            runtime.start(run_id="run-retired-runtime-key")
+        self.assertFalse(runtime.events.path("run-retired-runtime-key").exists())
+
     def test_run_id_path_traversal_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "run_id must contain"):
             self.runtime.start(run_id="../outside")

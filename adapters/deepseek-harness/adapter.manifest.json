@@ -48,7 +48,10 @@
     "signed-runtime-events",
     "signed-runtime-checkpoints",
     "sqlite-transactional-event-store",
-    "runtime-leases-and-terminal-retention"
+    "runtime-leases-and-terminal-retention",
+    "dev-team-regulated-complexity-profiles",
+    "runtime-profile-preflight",
+    "active-runtime-signing-key-enforcement"
   ],
   "host_binding_manifest": "readonly-tool-bindings.json",
   "host_binding_signature": "readonly-tool-bindings.sig.json",

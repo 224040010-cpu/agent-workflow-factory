@@ -47,3 +47,5 @@ python scripts/run_runtime_example.py
 ```
 
 集成测试可以使用 `scripts/workflowctl.py` 提供的 `runtime-start`、`runtime-route`、`runtime-complete`、`runtime-pause`、`runtime-resume`、`runtime-replay` 和 `runtime-purge` 命令。事实更新通过 JSON 文件提交，确保自由文本模型输出不会直接进入可信路由边界。签名与 SQLite 参数参见 [`deepseek-readonly-v1.0.md`](deepseek-readonly-v1.0.md)。
+
+v1.1 推荐先执行 `workflowctl.py profile-show` 选择 `dev`、`team` 或 `regulated`，再用 `profile-check` 验证签名密钥、信任库和根材料。低层参数仍然可用，但不再要求普通用户逐项理解；完整档位和版本路线参见 [`development-roadmap-and-complexity.md`](development-roadmap-and-complexity.md)。

@@ -1,5 +1,7 @@
 # DeepSeek Harness 只读 Graph v1.0：HSM 签名与可信运行证据
 
+> v1.0 是可信运行技术基线。v1.1 已用 `dev`、`team`、`regulated` 预设收敛配置入口，参见 [`development-roadmap-and-complexity.md`](development-roadmap-and-complexity.md)。下文保留完整底层参数，供平台与安全评审使用。
+
 ## 评审结论
 
 v1.0 将 v0.9 的“可信工作流软件包”扩展为“可信构建 + 可信运行”：
