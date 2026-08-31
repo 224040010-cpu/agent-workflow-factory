@@ -99,9 +99,11 @@ v1.1 的退出门槛是预设组件测试、CLI 预检测试、Dev/Regulated Dee
 
 ### v1.2：项目配置与一键业务入口
 
-计划增加可版本化的 `workflow.project.json`，把目录、Catalog、Provider、模型和档位固化为项目配置；增加面向业务流程的 `create / review / test-run` 短命令；支持 `--dry-run` 展示将生成的 BPMN、Agent、Tool 与安全策略，而不调用模型或外部系统。
+第一阶段已经实现可版本化的 `workflow.project.json`，把目录、Catalog、Provider、模型和档位固化为项目配置；已经增加面向业务流程的 `create / review / test-run` 短命令；`--dry-run` 会在临时目录展示将生成的 BPMN、整体 SVG、Agent、Tool 与安全策略，不调用模型或外部系统，也不污染正式输出目录。
 
-退出门槛是业务用户完成一次流程生成和测试运行时，不需要理解 PKCS#11、事件库和信任链参数。
+`review` 会验证业务交付清单、文件摘要和编译软件包；`test-run` 当前是确定性合同测试，验证软件包与 DeepSeek 只读适配器的能力匹配。它不会把“不支持人工审批或系统任务”包装成运行成功。真实 Provider 调用仍由已有的受治理 `run` 命令承担，后续增量再把项目级安全材料引用与该入口连接。
+
+第一阶段自动化门槛包括配置安全、无副作用预览、Agent/Tool 绑定、交付物篡改拒绝、可运行与阻塞分支，以及 Windows/WSL 全量回归。完整设计参见 [`v1.2-project-entry.md`](v1.2-project-entry.md)。最终退出门槛仍是业务用户完成一次流程生成和测试运行时，不需要理解 PKCS#11、事件库和信任链参数。
 
 ### v1.3：生产适配与可观测性
 

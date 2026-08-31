@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow-factory.local/schemas/workflow-project.schema.json",
+  "title": "Agent Workflow Factory Project",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "project_id", "source", "output", "catalog", "definition"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "project_id": { "type": "string", "pattern": "^[a-z][a-z0-9-]+$" },
+    "source": { "type": "string", "minLength": 1 },
+    "output": { "type": "string", "minLength": 1 },
+    "catalog": { "type": "string", "minLength": 1 },
+    "definition": { "type": "string", "minLength": 1 },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": { "enum": ["dev", "team", "regulated"] },
+        "adapter": { "const": "deepseek" },
+        "provider": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

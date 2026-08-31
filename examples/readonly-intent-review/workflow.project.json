@@ -1,0 +1,15 @@
+{
+  "$schema": "../../schemas/workflow-project.schema.json",
+  "schema_version": "1.0.0",
+  "project_id": "readonly-intent-review",
+  "source": "business-description.txt",
+  "output": "../../build/projects/readonly-intent-review",
+  "catalog": "../../fixtures/catalog.snapshot.json",
+  "definition": "../../contracts/system-definition.json",
+  "runtime": {
+    "profile": "dev",
+    "adapter": "deepseek",
+    "provider": "deepseek-official",
+    "model": "deepseek-v4-flash"
+  }
+}

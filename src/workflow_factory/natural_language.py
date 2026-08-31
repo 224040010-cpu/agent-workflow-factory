@@ -25,6 +25,15 @@ KIND_ALIASES = {
     "外部": "external",
 }
 
+# 受控业务语言只允许把明确动作绑定到已治理的只读工具。这里不做模糊的
+# 大模型猜测；未命中的 Agent 动作仍会生成 Agent 节点，但不会获得 Tool 权限。
+CONTROLLED_TOOL_ACTIONS = {
+    "解析业务意图": "parse-business-intent",
+    "解析并复核业务意图": "parse-business-intent",
+    "提取流程实体": "extract-process-entities",
+    "检测描述歧义": "detect-description-ambiguity",
+}
+
 
 def _extract_field(text: str, aliases: tuple[str, ...]) -> str | None:
     label = "|".join(re.escape(item) for item in aliases)
@@ -198,6 +207,13 @@ def interpret_business_text(
             "system": "script",
             "external": "manual",
         }[participant["kind"]]
+        tool_ref = (
+            CONTROLLED_TOOL_ACTIONS.get(action)
+            if participant["kind"] == "agent"
+            else None
+        )
+        if tool_ref:
+            kind = "service"
         step = {
             "id": step_id,
             "name": action,
@@ -206,8 +222,10 @@ def interpret_business_text(
             "completion_evidence": [f"facts.completed.{step_id} == true"],
             "risk_level": "L1",
         }
-        if kind == "agent":
+        if participant["kind"] == "agent":
             step["agent_ref"] = participant["agent_ref"]
+        if tool_ref:
+            step["tool_ref"] = tool_ref
         steps.append(step)
         return step_id
 

@@ -17,7 +17,7 @@
 
 两个仓库各自保存一份字节完全一致的 [`contracts/system-definition.json`](contracts/system-definition.json)。`skill-registory` 发布权威定义，本仓库验证其镜像；如果能力目录使用了不同版本的总定义，本仓库将拒绝打包。
 
-## v3 已实现的纵向能力
+## 当前已实现的纵向能力
 
 - 结构化业务语言契约。
 - 将受控中文业务描述解释为结构化需求，并保留置信度、警告和假设。
@@ -40,6 +40,7 @@
 - DeepSeek v0.9 全包信任：BPMN/Graph/Agent/Policy/Lock 全清单签名、离线根签名和可插拔签名 Provider。
 - DeepSeek v1.0 生产信任：PKCS#11 Ed25519 HSM Provider、逐事件签名、检查点签名、SQLite 原子事件存储、运行租约和终止记录保留策略。
 - v1.1 复杂度收敛：`dev`、`team`、`regulated` 三档运行预设、配置预检、活动签名密钥检查和高等级防降级保护。
+- v1.2 项目入口：使用一份 `workflow.project.json` 固化输入、输出、能力目录和运行档位，并通过 `create / review / test-run` 完成预览、生成、复核和能力预检。
 - SQLite 连接在事务结束后显式释放，Windows 与 Linux 均可立即清理或归档运行数据库。
 
 v1.1 技术基线已于 2026-08-31 完成真实 DeepSeek、SoftHSM PKCS#11、HSM 签名运行、无私钥重放、防篡改和全量回归验收。验收范围、证据和仍需目标机构确认的生产边界参见 [`docs/v1.1-acceptance.md`](docs/v1.1-acceptance.md)。
@@ -49,6 +50,39 @@ v1.1 技术基线已于 2026-08-31 完成真实 DeepSeek、SoftHSM PKCS#11、HSM
 ## 快速评审
 
 需要 Python 3.11 或更高版本。基础 Ed25519 签名层使用 `cryptography`；连接 PKCS#11 HSM 时安装可选依赖：`python -m pip install -e '.[pkcs11]'`。
+
+### v1.2 面向业务项目的最短入口
+
+项目定义样例位于 [`examples/readonly-intent-review/workflow.project.json`](examples/readonly-intent-review/workflow.project.json)。其中只保存业务输入、输出目录、能力目录、模型名称和复杂度档位，不允许保存 API Key、PIN、私钥或密码。
+
+第一步先预览。该命令在临时目录生成 BPMN、整体流程图、Agent、Tool 和安全策略，不写项目输出目录，也不调用 DeepSeek 或任何外部系统：
+
+```bash
+python scripts/workflowctl.py create \
+  examples/readonly-intent-review/workflow.project.json \
+  --dry-run
+```
+
+第二步正式生成并复核交付物：
+
+```bash
+python scripts/workflowctl.py create \
+  examples/readonly-intent-review/workflow.project.json
+
+python scripts/workflowctl.py review \
+  examples/readonly-intent-review/workflow.project.json
+```
+
+第三步执行确定性合同测试。它验证软件包完整性、工具是否已固定、运行策略与 DeepSeek 只读适配器能力是否匹配，但不会产生真实模型费用：
+
+```bash
+python scripts/workflowctl.py test-run \
+  examples/readonly-intent-review/workflow.project.json
+```
+
+`READY` 表示该 Graph 可以进入现有受治理 `run` 链路；`BLOCKED` 会列出缺失能力和不支持的节点类型。报销示例含人工与系统节点，因此使用当前 DeepSeek 只读适配器时会如实返回 `human_gate` 和 `script_task` 阻塞，而不会伪造运行成功。详细设计、输出字段和边界参见 [`docs/v1.2-project-entry.md`](docs/v1.2-project-entry.md)。
+
+### 底层命令评审
 
 ```bash
 python scripts/workflowctl.py profile-show
@@ -110,4 +144,4 @@ python -m unittest discover -s tests -v
 - Registry 状态变更；
 - 运行期间从持续变化的 Git 分支动态发现能力。
 
-自然语言输入格式和返回文件参见 [`docs/business-text-to-diagram.md`](docs/business-text-to-diagram.md)。架构和运行时评审细节参见 [`docs/architecture.md`](docs/architecture.md)、[`docs/reference-runtime.md`](docs/reference-runtime.md)、[`docs/development-roadmap-and-complexity.md`](docs/development-roadmap-and-complexity.md)、[`docs/v1.1-acceptance.md`](docs/v1.1-acceptance.md)、[`docs/deepseek-readonly-mvp.md`](docs/deepseek-readonly-mvp.md)、[`docs/deepseek-readonly-multinode.md`](docs/deepseek-readonly-multinode.md)、[`docs/deepseek-readonly-v0.7.md`](docs/deepseek-readonly-v0.7.md)、[`docs/deepseek-readonly-v0.8.md`](docs/deepseek-readonly-v0.8.md)、[`docs/deepseek-readonly-v0.9.md`](docs/deepseek-readonly-v0.9.md)、[`docs/deepseek-readonly-v1.0.md`](docs/deepseek-readonly-v1.0.md) 和双仓共享的总定义。
+自然语言输入格式和返回文件参见 [`docs/business-text-to-diagram.md`](docs/business-text-to-diagram.md)。架构和运行时评审细节参见 [`docs/architecture.md`](docs/architecture.md)、[`docs/reference-runtime.md`](docs/reference-runtime.md)、[`docs/development-roadmap-and-complexity.md`](docs/development-roadmap-and-complexity.md)、[`docs/v1.1-acceptance.md`](docs/v1.1-acceptance.md)、[`docs/v1.2-project-entry.md`](docs/v1.2-project-entry.md)、[`docs/deepseek-readonly-mvp.md`](docs/deepseek-readonly-mvp.md)、[`docs/deepseek-readonly-multinode.md`](docs/deepseek-readonly-multinode.md)、[`docs/deepseek-readonly-v0.7.md`](docs/deepseek-readonly-v0.7.md)、[`docs/deepseek-readonly-v0.8.md`](docs/deepseek-readonly-v0.8.md)、[`docs/deepseek-readonly-v0.9.md`](docs/deepseek-readonly-v0.9.md)、[`docs/deepseek-readonly-v1.0.md`](docs/deepseek-readonly-v1.0.md) 和双仓共享的总定义。

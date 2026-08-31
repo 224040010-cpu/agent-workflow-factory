@@ -29,6 +29,11 @@ from workflow_factory.reference_runtime import (  # noqa: E402
     ReferenceRuntime,
     RuntimeIntegrityPolicy,
 )
+from workflow_factory.project import (  # noqa: E402
+    create_project,
+    review_project,
+    test_project,
+)
 from workflow_factory.signing import (  # noqa: E402
     FileEd25519SigningProvider,
     Pkcs11Ed25519SigningProvider,
@@ -186,6 +191,31 @@ def main() -> int:
         "--read-only",
         action="store_true",
         help="只检查重放/审计材料，不要求运行签名私钥",
+    )
+
+    create = subparsers.add_parser(
+        "create", help="从 workflow.project.json 生成完整工作流交付物"
+    )
+    create.add_argument("project", type=Path)
+    create.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="只生成临时预览，不写项目输出目录，也不调用外部模型",
+    )
+
+    review = subparsers.add_parser(
+        "review", help="复核业务视图、BPMN、Agent Graph 和交付物完整性"
+    )
+    review.add_argument("project", type=Path)
+
+    test_run = subparsers.add_parser(
+        "test-run", help="执行确定性合同测试和运行能力预检"
+    )
+    test_run.add_argument("project", type=Path)
+    test_run.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="在临时目录生成并预检，不写项目输出目录，不调用外部模型",
     )
 
     verify = subparsers.add_parser("verify-definition")
@@ -407,6 +437,19 @@ def main() -> int:
                     indent=2,
                 )
             )
+        elif args.command == "create":
+            report = create_project(args.project, dry_run=args.dry_run)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        elif args.command == "review":
+            report = review_project(args.project)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            if report["result"] != "PASS":
+                return 1
+        elif args.command == "test-run":
+            report = test_project(args.project, dry_run=args.dry_run)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            if report["result"] != "PASS":
+                return 1
         elif args.command == "verify-definition":
             verify_definition(args.definition, args.checksum)
         elif args.command == "generate-bpmn":
