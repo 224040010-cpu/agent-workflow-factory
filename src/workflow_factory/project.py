@@ -7,7 +7,10 @@ import tempfile
 from typing import Any
 
 from .complexity_profiles import profiles_report
-from .deepseek_harness import DeepSeekReadonlyAdapter
+from .deepseek_harness import (
+    DeepSeekReadonlyAdapter,
+    builtin_readonly_tool_bindings,
+)
 from .runtime_contracts import negotiate
 from .text_pipeline import build_from_business_text
 from .util import read_json, sha256_file
@@ -25,7 +28,7 @@ PROJECT_FIELDS = {
     "definition",
     "runtime",
 }
-RUNTIME_FIELDS = {"profile", "adapter", "provider", "model"}
+RUNTIME_FIELDS = {"profile", "adapter", "provider", "model", "deployment_ref"}
 SECRET_FIELDS = {
     "api_key",
     "apikey",
@@ -44,6 +47,7 @@ class ProjectRuntime:
     adapter: str = "deepseek"
     provider: str = "deepseek-official"
     model: str = "deepseek-v4-flash"
+    deployment_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -143,8 +147,11 @@ def load_project(config_path: Path) -> WorkflowProject:
         adapter=runtime_data.get("adapter", defaults.adapter),
         provider=runtime_data.get("provider", defaults.provider),
         model=runtime_data.get("model", defaults.model),
+        deployment_ref=runtime_data.get("deployment_ref"),
     )
     for field, value in asdict(runtime).items():
+        if field == "deployment_ref" and value is None:
+            continue
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"project.runtime.{field} must be a non-empty string")
     if runtime.profile not in profiles_report():
@@ -197,6 +204,7 @@ def _package_preview(project: WorkflowProject, output: Path) -> dict[str, Any]:
             "version": asset["version"],
             "risk_level": asset["risk_level"],
             "status": asset["status"],
+            "endpoint": asset.get("endpoint"),
         }
         for asset in lock.get("resolved_assets", [])
         if asset.get("type") == "tool"
@@ -238,7 +246,13 @@ def _package_preview(project: WorkflowProject, output: Path) -> dict[str, Any]:
     }
 
 
-def create_project(config_path: Path, *, dry_run: bool = False) -> dict[str, Any]:
+def create_project(
+    config_path: Path,
+    *,
+    dry_run: bool = False,
+    signing_provider: Any | None = None,
+    signing_publisher: str = "agent-workflow-factory-build",
+) -> dict[str, Any]:
     project = load_project(config_path)
     if dry_run:
         with tempfile.TemporaryDirectory(prefix="awf-project-preview-") as temporary:
@@ -249,6 +263,8 @@ def create_project(config_path: Path, *, dry_run: bool = False) -> dict[str, Any
                 project.definition,
                 preview_output,
                 workflow_id=project.project_id,
+                signing_provider=signing_provider,
+                signing_publisher=signing_publisher,
             )
             preview = _package_preview(project, preview_output)
         return {
@@ -257,6 +273,7 @@ def create_project(config_path: Path, *, dry_run: bool = False) -> dict[str, Any
             "dry_run": True,
             "external_calls": False,
             "writes_to_project_output": False,
+            "package_signed": signing_provider is not None,
             "preview": preview,
         }
 
@@ -272,6 +289,8 @@ def create_project(config_path: Path, *, dry_run: bool = False) -> dict[str, Any
         project.definition,
         project.output,
         workflow_id=project.project_id,
+        signing_provider=signing_provider,
+        signing_publisher=signing_publisher,
     )
     return {
         "result": "PASS",
@@ -279,6 +298,7 @@ def create_project(config_path: Path, *, dry_run: bool = False) -> dict[str, Any
         "dry_run": False,
         "external_calls": False,
         "writes_to_project_output": True,
+        "package_signed": signing_provider is not None,
         "output": str(project.output),
         "preview": _package_preview(project, project.output),
     }
@@ -352,6 +372,16 @@ def _runtime_readiness(preview: dict[str, Any]) -> dict[str, Any]:
         f"DeepSeek 只读适配器不能执行节点类型：{kind}"
         for kind in unsupported_actions
     )
+    available_endpoints = set(builtin_readonly_tool_bindings())
+    unavailable_tools = sorted(
+        tool["name"]
+        for tool in preview["tools"]
+        if tool.get("endpoint") not in available_endpoints
+    )
+    blockers.extend(
+        f"Tool 没有经过审查的 DeepSeek 只读 Host Binding：{tool_name}"
+        for tool_name in unavailable_tools
+    )
     unbound_nodes = preview["graph"].get("unbound_execution_nodes", [])
     blockers.extend(
         f"节点缺少经过固定的 Agent 或 Tool 绑定：{node_id}"
@@ -364,6 +394,7 @@ def _runtime_readiness(preview: dict[str, Any]) -> dict[str, Any]:
         "missing_capabilities": missing_capabilities,
         "unsupported_action_kinds": unsupported_actions,
         "unbound_execution_nodes": unbound_nodes,
+        "unavailable_tool_bindings": unavailable_tools,
         "blockers": blockers,
     }
 
@@ -389,6 +420,7 @@ def test_project(config_path: Path, *, dry_run: bool = False) -> dict[str, Any]:
             "missing_capabilities": [],
             "unsupported_action_kinds": [],
             "unbound_execution_nodes": [],
+            "unavailable_tool_bindings": [],
             "blockers": ["项目复核未通过，不能进行运行能力预检"],
         }
     )

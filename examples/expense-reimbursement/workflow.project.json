@@ -10,6 +10,7 @@
     "profile": "dev",
     "adapter": "deepseek",
     "provider": "deepseek-official",
-    "model": "deepseek-v4-flash"
+    "model": "deepseek-v4-flash",
+    "deployment_ref": "local-deepseek-dev"
   }
 }

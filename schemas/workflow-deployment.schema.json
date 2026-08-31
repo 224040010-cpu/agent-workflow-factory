@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workflow-factory.local/schemas/workflow-deployment.schema.json",
+  "title": "Agent Workflow Factory Deployment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "deployment_id", "runtime_dir", "cordis", "artifact_trust", "build_signer"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "deployment_id": { "type": "string", "minLength": 1 },
+    "runtime_dir": { "type": "string", "minLength": 1 },
+    "cordis": { "type": "string", "minLength": 1 },
+    "api_key_env": { "type": "string", "minLength": 1 },
+    "max_tokens": { "type": "integer", "minimum": 1 },
+    "base_url": { "type": "string", "minLength": 1 },
+    "artifact_trust": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trust_store", "trust_store_signature", "trust_root_public_key", "binding_manifest", "binding_signature"],
+      "properties": {
+        "trust_store": { "type": "string", "minLength": 1 },
+        "trust_store_signature": { "type": "string", "minLength": 1 },
+        "trust_root_public_key": { "type": "string", "minLength": 1 },
+        "binding_manifest": { "type": "string", "minLength": 1 },
+        "binding_signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "build_signer": { "$ref": "#/$defs/signer" },
+    "runtime_signer": { "$ref": "#/$defs/signer" }
+  },
+  "$defs": {
+    "signer": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "private_key_path"],
+          "properties": {
+            "kind": { "const": "pem" },
+            "private_key_path": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "module", "token_label", "key_label", "key_id"],
+          "properties": {
+            "kind": { "const": "pkcs11" },
+            "module": { "type": "string", "minLength": 1 },
+            "token_label": { "type": "string", "minLength": 1 },
+            "key_label": { "type": "string", "minLength": 1 },
+            "key_id": { "type": "string", "minLength": 1 },
+            "object_id": { "type": "string", "pattern": "^[0-9a-fA-F]*$" },
+            "pin_env": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    }
+  }
+}

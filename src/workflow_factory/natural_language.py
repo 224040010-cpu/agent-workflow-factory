@@ -33,6 +33,10 @@ CONTROLLED_TOOL_ACTIONS = {
     "提取流程实体": "extract-process-entities",
     "检测描述歧义": "detect-description-ambiguity",
 }
+CONTROLLED_TOOL_EVIDENCE = {
+    "parse-business-intent": ["facts.intent.parsed == true"],
+    "detect-description-ambiguity": ["facts.analysis.ambiguity_checked == true"],
+}
 
 
 def _extract_field(text: str, aliases: tuple[str, ...]) -> str | None:
@@ -219,7 +223,9 @@ def interpret_business_text(
             "name": action,
             "kind": kind,
             "participant": participant["id"],
-            "completion_evidence": [f"facts.completed.{step_id} == true"],
+            "completion_evidence": CONTROLLED_TOOL_EVIDENCE.get(
+                tool_ref, [f"facts.completed.{step_id} == true"]
+            ),
             "risk_level": "L1",
         }
         if participant["kind"] == "agent":

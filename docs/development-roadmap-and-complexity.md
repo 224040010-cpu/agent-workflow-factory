@@ -101,7 +101,9 @@ v1.1 的退出门槛是预设组件测试、CLI 预检测试、Dev/Regulated Dee
 
 第一阶段已经实现可版本化的 `workflow.project.json`，把目录、Catalog、Provider、模型和档位固化为项目配置；已经增加面向业务流程的 `create / review / test-run` 短命令；`--dry-run` 会在临时目录展示将生成的 BPMN、整体 SVG、Agent、Tool 与安全策略，不调用模型或外部系统，也不污染正式输出目录。
 
-`review` 会验证业务交付清单、文件摘要和编译软件包；`test-run` 当前是确定性合同测试，验证软件包与 DeepSeek 只读适配器的能力匹配。它不会把“不支持人工审批或系统任务”包装成运行成功。真实 Provider 调用仍由已有的受治理 `run` 命令承担，后续增量再把项目级安全材料引用与该入口连接。
+v1.2 第一阶段的 `review` 会验证业务交付清单、文件摘要和编译软件包；`test-run` 是确定性合同测试，验证软件包与 DeepSeek 只读适配器的能力匹配。它不会把“不支持人工审批或系统任务”包装成运行成功。该阶段的真实 Provider 调用仍由底层 `run` 命令承担。
+
+v1.2.1 已完成上述后续增量：项目配置新增非敏感 `deployment_ref`，独立部署配置负责 Build/Runtime Signer、根信任、Tool Binding、Cordis、Runtime 目录和凭据环境变量名称；新增 `deploy-check` 与 `run-project`。部署 Dry Run 不调用签名器，正式创建强制生成并验证签名软件包，真实运行前再次执行完整预检。设计与安全边界参见 [`v1.2.1-deployment-entry.md`](v1.2.1-deployment-entry.md)。
 
 第一阶段自动化门槛包括配置安全、无副作用预览、Agent/Tool 绑定、交付物篡改拒绝、可运行与阻塞分支，以及 Windows/WSL 全量回归。完整设计参见 [`v1.2-project-entry.md`](v1.2-project-entry.md)。最终退出门槛仍是业务用户完成一次流程生成和测试运行时，不需要理解 PKCS#11、事件库和信任链参数。
 
@@ -121,7 +123,7 @@ v1.1 的退出门槛是预设组件测试、CLI 预检测试、Dev/Regulated Dee
 
 ### Dev
 
-面向本地开发、演示和低风险原型。默认使用 JSONL、单进程运行、30 天保留，不强制运行签名或根信任。选择 SQLite或签名可以增强 Dev，但不会自动获得 Team 合规声明。
+面向本地开发、演示和低风险原型。默认使用 JSONL、单进程运行、30 天保留，不强制运行签名或根信任。选择 SQLite 或签名可以增强 Dev，但不会自动获得 Team 合规声明。
 
 ```bash
 python scripts/workflowctl.py profile-check --profile dev

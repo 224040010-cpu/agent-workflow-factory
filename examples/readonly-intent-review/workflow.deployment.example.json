@@ -1,0 +1,23 @@
+{
+  "$schema": "../../schemas/workflow-deployment.schema.json",
+  "schema_version": "1.0.0",
+  "deployment_id": "local-deepseek-dev",
+  "runtime_dir": "/home/your-user/.local/share/agent-workflow-factory/readonly-intent-review",
+  "cordis": "../../adapters/deepseek-harness/readonly.cordis.yml",
+  "artifact_trust": {
+    "trust_store": "/home/your-user/.config/agent-workflow-factory/trusted-publishers.json",
+    "trust_store_signature": "/home/your-user/.config/agent-workflow-factory/trusted-publishers.sig.json",
+    "trust_root_public_key": "/home/your-user/.config/agent-workflow-factory/root-public-key.json",
+    "binding_manifest": "../../adapters/deepseek-harness/readonly-tool-bindings.json",
+    "binding_signature": "../../adapters/deepseek-harness/readonly-tool-bindings.sig.json"
+  },
+  "build_signer": {
+    "kind": "pem",
+    "private_key_path": "/home/your-user/.config/agent-workflow-factory/build-signing-key.pem"
+  },
+  "runtime_signer": {
+    "kind": "pem",
+    "private_key_path": "/home/your-user/.config/agent-workflow-factory/runtime-signing-key.pem"
+  },
+  "api_key_env": "DEEPSEEK_API_KEY"
+}

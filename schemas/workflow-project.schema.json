@@ -19,7 +19,8 @@
         "profile": { "enum": ["dev", "team", "regulated"] },
         "adapter": { "const": "deepseek" },
         "provider": { "type": "string", "minLength": 1 },
-        "model": { "type": "string", "minLength": 1 }
+        "model": { "type": "string", "minLength": 1 },
+        "deployment_ref": { "type": "string", "minLength": 1 }
       }
     }
   }

@@ -25,6 +25,11 @@ from workflow_factory.deepseek_harness import (  # noqa: E402
     DeepSeekReadonlyRunner,
     DeepSeekTrustPolicy,
 )
+from workflow_factory.deployment import (  # noqa: E402
+    check_deployment,
+    create_project_for_deployment,
+    run_project,
+)
 from workflow_factory.reference_runtime import (  # noqa: E402
     ReferenceRuntime,
     RuntimeIntegrityPolicy,
@@ -198,6 +203,11 @@ def main() -> int:
     )
     create.add_argument("project", type=Path)
     create.add_argument(
+        "--deployment-file",
+        type=Path,
+        help="平台管理员提供的部署配置；正式生成时对软件包签名",
+    )
+    create.add_argument(
         "--dry-run",
         action="store_true",
         help="只生成临时预览，不写项目输出目录，也不调用外部模型",
@@ -217,6 +227,25 @@ def main() -> int:
         action="store_true",
         help="在临时目录生成并预检，不写项目输出目录，不调用外部模型",
     )
+
+    deploy_check = subparsers.add_parser(
+        "deploy-check", help="校验项目软件包、部署信任材料与真实运行环境"
+    )
+    deploy_check.add_argument("project", type=Path)
+    deploy_check.add_argument("--deployment-file", type=Path, required=True)
+    deploy_check.add_argument(
+        "--live",
+        action="store_true",
+        help="同时检查 DeepSeek 凭据、官方 SDK 和操作系统支持",
+    )
+
+    project_run = subparsers.add_parser(
+        "run-project", help="使用项目引用的部署配置执行真实受治理工作流"
+    )
+    project_run.add_argument("project", type=Path)
+    project_run.add_argument("--deployment-file", type=Path, required=True)
+    project_run.add_argument("--run-id")
+    project_run.add_argument("--facts", type=Path)
 
     verify = subparsers.add_parser("verify-definition")
     verify.add_argument(
@@ -438,7 +467,15 @@ def main() -> int:
                 )
             )
         elif args.command == "create":
-            report = create_project(args.project, dry_run=args.dry_run)
+            report = (
+                create_project_for_deployment(
+                    args.project,
+                    args.deployment_file,
+                    dry_run=args.dry_run,
+                )
+                if args.deployment_file
+                else create_project(args.project, dry_run=args.dry_run)
+            )
             print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.command == "review":
             report = review_project(args.project)
@@ -447,6 +484,25 @@ def main() -> int:
                 return 1
         elif args.command == "test-run":
             report = test_project(args.project, dry_run=args.dry_run)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            if report["result"] != "PASS":
+                return 1
+        elif args.command == "deploy-check":
+            report = check_deployment(
+                args.project,
+                args.deployment_file,
+                require_live_environment=args.live,
+            )
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            if report["result"] != "PASS":
+                return 1
+        elif args.command == "run-project":
+            report = run_project(
+                args.project,
+                args.deployment_file,
+                run_id=args.run_id,
+                initial_facts=read_json(args.facts) if args.facts else None,
+            )
             print(json.dumps(report, ensure_ascii=False, indent=2))
             if report["result"] != "PASS":
                 return 1

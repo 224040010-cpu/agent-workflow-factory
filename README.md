@@ -41,6 +41,7 @@
 - DeepSeek v1.0 生产信任：PKCS#11 Ed25519 HSM Provider、逐事件签名、检查点签名、SQLite 原子事件存储、运行租约和终止记录保留策略。
 - v1.1 复杂度收敛：`dev`、`team`、`regulated` 三档运行预设、配置预检、活动签名密钥检查和高等级防降级保护。
 - v1.2 项目入口：使用一份 `workflow.project.json` 固化输入、输出、能力目录和运行档位，并通过 `create / review / test-run` 完成预览、生成、复核和能力预检。
+- v1.2.1 部署入口：项目只引用非敏感部署名称，平台配置负责签名器与信任材料；通过 `deploy-check / run-project` 安全连接真实 DeepSeek Harness。
 - SQLite 连接在事务结束后显式释放，Windows 与 Linux 均可立即清理或归档运行数据库。
 
 v1.1 技术基线已于 2026-08-31 完成真实 DeepSeek、SoftHSM PKCS#11、HSM 签名运行、无私钥重放、防篡改和全量回归验收。验收范围、证据和仍需目标机构确认的生产边界参见 [`docs/v1.1-acceptance.md`](docs/v1.1-acceptance.md)。
@@ -81,6 +82,28 @@ python scripts/workflowctl.py test-run \
 ```
 
 `READY` 表示该 Graph 可以进入现有受治理 `run` 链路；`BLOCKED` 会列出缺失能力和不支持的节点类型。报销示例含人工与系统节点，因此使用当前 DeepSeek 只读适配器时会如实返回 `human_gate` 和 `script_task` 阻塞，而不会伪造运行成功。详细设计、输出字段和边界参见 [`docs/v1.2-project-entry.md`](docs/v1.2-project-entry.md)。
+
+### v1.2.1 连接真实部署
+
+真实运行使用独立的 `workflow.deployment.json`。仓库只提供不含真实凭据的 [`部署配置模板`](examples/readonly-intent-review/workflow.deployment.example.json)；复制后应由平台管理员填写本机信任材料和签名器路径，不要把 API Key、HSM PIN 或私钥内容写入该文件。
+
+```bash
+python scripts/workflowctl.py create \
+  examples/readonly-intent-review/workflow.project.json \
+  --deployment-file /path/to/workflow.deployment.json
+
+python scripts/workflowctl.py deploy-check \
+  examples/readonly-intent-review/workflow.project.json \
+  --deployment-file /path/to/workflow.deployment.json \
+  --live
+
+python scripts/workflowctl.py run-project \
+  examples/readonly-intent-review/workflow.project.json \
+  --deployment-file /path/to/workflow.deployment.json \
+  --run-id run-readonly-intent-review
+```
+
+部署预检只报告凭据环境变量是否存在，不读取或输出凭据值。完整配置字段、PEM/PKCS#11 边界和验收范围参见 [`docs/v1.2.1-deployment-entry.md`](docs/v1.2.1-deployment-entry.md)。
 
 ### 底层命令评审
 
@@ -144,4 +167,4 @@ python -m unittest discover -s tests -v
 - Registry 状态变更；
 - 运行期间从持续变化的 Git 分支动态发现能力。
 
-自然语言输入格式和返回文件参见 [`docs/business-text-to-diagram.md`](docs/business-text-to-diagram.md)。架构和运行时评审细节参见 [`docs/architecture.md`](docs/architecture.md)、[`docs/reference-runtime.md`](docs/reference-runtime.md)、[`docs/development-roadmap-and-complexity.md`](docs/development-roadmap-and-complexity.md)、[`docs/v1.1-acceptance.md`](docs/v1.1-acceptance.md)、[`docs/v1.2-project-entry.md`](docs/v1.2-project-entry.md)、[`docs/deepseek-readonly-mvp.md`](docs/deepseek-readonly-mvp.md)、[`docs/deepseek-readonly-multinode.md`](docs/deepseek-readonly-multinode.md)、[`docs/deepseek-readonly-v0.7.md`](docs/deepseek-readonly-v0.7.md)、[`docs/deepseek-readonly-v0.8.md`](docs/deepseek-readonly-v0.8.md)、[`docs/deepseek-readonly-v0.9.md`](docs/deepseek-readonly-v0.9.md)、[`docs/deepseek-readonly-v1.0.md`](docs/deepseek-readonly-v1.0.md) 和双仓共享的总定义。
+自然语言输入格式和返回文件参见 [`docs/business-text-to-diagram.md`](docs/business-text-to-diagram.md)。架构和运行时评审细节参见 [`docs/architecture.md`](docs/architecture.md)、[`docs/reference-runtime.md`](docs/reference-runtime.md)、[`docs/development-roadmap-and-complexity.md`](docs/development-roadmap-and-complexity.md)、[`docs/v1.1-acceptance.md`](docs/v1.1-acceptance.md)、[`docs/v1.2-project-entry.md`](docs/v1.2-project-entry.md)、[`docs/v1.2.1-deployment-entry.md`](docs/v1.2.1-deployment-entry.md)、[`docs/deepseek-readonly-mvp.md`](docs/deepseek-readonly-mvp.md)、[`docs/deepseek-readonly-multinode.md`](docs/deepseek-readonly-multinode.md)、[`docs/deepseek-readonly-v0.7.md`](docs/deepseek-readonly-v0.7.md)、[`docs/deepseek-readonly-v0.8.md`](docs/deepseek-readonly-v0.8.md)、[`docs/deepseek-readonly-v0.9.md`](docs/deepseek-readonly-v0.9.md)、[`docs/deepseek-readonly-v1.0.md`](docs/deepseek-readonly-v1.0.md) 和双仓共享的总定义。
