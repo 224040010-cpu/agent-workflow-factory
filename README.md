@@ -40,6 +40,9 @@
 - DeepSeek v0.9 全包信任：BPMN/Graph/Agent/Policy/Lock 全清单签名、离线根签名和可插拔签名 Provider。
 - DeepSeek v1.0 生产信任：PKCS#11 Ed25519 HSM Provider、逐事件签名、检查点签名、SQLite 原子事件存储、运行租约和终止记录保留策略。
 - v1.1 复杂度收敛：`dev`、`team`、`regulated` 三档运行预设、配置预检、活动签名密钥检查和高等级防降级保护。
+- SQLite 连接在事务结束后显式释放，Windows 与 Linux 均可立即清理或归档运行数据库。
+
+v1.1 技术基线已于 2026-08-31 完成真实 DeepSeek、SoftHSM PKCS#11、HSM 签名运行、无私钥重放、防篡改和全量回归验收。验收范围、证据和仍需目标机构确认的生产边界参见 [`docs/v1.1-acceptance.md`](docs/v1.1-acceptance.md)。
 
 尚未实现：理解任意自由文本的模型解释器、跨主机生产调度器、DeepSeek 人工审批和定时循环绑定、非 PKCS#11 云 KMS 驱动、外部不可回滚时间戳锚、补偿事务和交互式可视化界面。
 
@@ -107,4 +110,4 @@ python -m unittest discover -s tests -v
 - Registry 状态变更；
 - 运行期间从持续变化的 Git 分支动态发现能力。
 
-自然语言输入格式和返回文件参见 [`docs/business-text-to-diagram.md`](docs/business-text-to-diagram.md)。架构和运行时评审细节参见 [`docs/architecture.md`](docs/architecture.md)、[`docs/reference-runtime.md`](docs/reference-runtime.md)、[`docs/development-roadmap-and-complexity.md`](docs/development-roadmap-and-complexity.md)、[`docs/deepseek-readonly-mvp.md`](docs/deepseek-readonly-mvp.md)、[`docs/deepseek-readonly-multinode.md`](docs/deepseek-readonly-multinode.md)、[`docs/deepseek-readonly-v0.7.md`](docs/deepseek-readonly-v0.7.md)、[`docs/deepseek-readonly-v0.8.md`](docs/deepseek-readonly-v0.8.md)、[`docs/deepseek-readonly-v0.9.md`](docs/deepseek-readonly-v0.9.md)、[`docs/deepseek-readonly-v1.0.md`](docs/deepseek-readonly-v1.0.md) 和双仓共享的总定义。
+自然语言输入格式和返回文件参见 [`docs/business-text-to-diagram.md`](docs/business-text-to-diagram.md)。架构和运行时评审细节参见 [`docs/architecture.md`](docs/architecture.md)、[`docs/reference-runtime.md`](docs/reference-runtime.md)、[`docs/development-roadmap-and-complexity.md`](docs/development-roadmap-and-complexity.md)、[`docs/v1.1-acceptance.md`](docs/v1.1-acceptance.md)、[`docs/deepseek-readonly-mvp.md`](docs/deepseek-readonly-mvp.md)、[`docs/deepseek-readonly-multinode.md`](docs/deepseek-readonly-multinode.md)、[`docs/deepseek-readonly-v0.7.md`](docs/deepseek-readonly-v0.7.md)、[`docs/deepseek-readonly-v0.8.md`](docs/deepseek-readonly-v0.8.md)、[`docs/deepseek-readonly-v0.9.md`](docs/deepseek-readonly-v0.9.md)、[`docs/deepseek-readonly-v1.0.md`](docs/deepseek-readonly-v1.0.md) 和双仓共享的总定义。

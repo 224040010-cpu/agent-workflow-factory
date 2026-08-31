@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -263,12 +265,27 @@ class SqliteEventStore(JsonlEventStore):
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database, timeout=30)
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA foreign_keys=ON")
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA foreign_keys=ON")
+        except sqlite3.Error:
+            connection.close()
+            raise
         return connection
 
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        """Commit or roll back the transaction, then release the file handle."""
+
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS events (
@@ -298,7 +315,7 @@ class SqliteEventStore(JsonlEventStore):
 
     def read(self, run_id: str) -> list[dict]:
         self.path(run_id)
-        with self._connect() as connection:
+        with self._connection() as connection:
             rows = connection.execute(
                 "SELECT event_json FROM events WHERE run_id = ? ORDER BY seq",
                 (run_id,),
@@ -317,7 +334,7 @@ class SqliteEventStore(JsonlEventStore):
 
     def append(self, run_id: str, event_type: str, payload: dict) -> dict:
         self.path(run_id)
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._assert_lease(connection, run_id)
             rows = connection.execute(
@@ -360,7 +377,7 @@ class SqliteEventStore(JsonlEventStore):
             raise ValueError("Runtime lease TTL must be positive")
         now = time.time()
         expires_at = now + ttl
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT owner, expires_at FROM leases WHERE run_id = ?", (run_id,)
@@ -385,7 +402,7 @@ class SqliteEventStore(JsonlEventStore):
             raise ValueError("Runtime lease owner must not be empty")
         now = time.time()
         expires_at = now + self.lease_ttl_seconds
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT owner, expires_at FROM leases WHERE run_id = ?", (run_id,)
@@ -403,14 +420,14 @@ class SqliteEventStore(JsonlEventStore):
         owner = owner or self.lease_owner
         if owner is None:
             raise ValueError("Runtime lease owner must not be empty")
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 "DELETE FROM leases WHERE run_id = ? AND owner = ?", (run_id, owner)
             )
 
     def mark_terminal(self, run_id: str) -> None:
         self.path(run_id)
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 "UPDATE runs SET terminal = 1, updated_at = ? WHERE run_id = ?",
                 (time.time(), run_id),
@@ -419,7 +436,7 @@ class SqliteEventStore(JsonlEventStore):
     def purge_expired(self, now: float | None = None) -> int:
         now = now or time.time()
         cutoff = now - self.retention_days * 86400
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             run_ids = [
                 row[0]

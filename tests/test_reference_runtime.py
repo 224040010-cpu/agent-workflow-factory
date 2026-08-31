@@ -290,6 +290,16 @@ class ReferenceRuntimeTest(unittest.TestCase):
         self.assertFalse((checkpoint_root / "run-leased.json").exists())
         self.assertFalse((checkpoint_root / "run-leased.sig.json").exists())
 
+    def test_sqlite_store_releases_database_file_handle(self) -> None:
+        root = self.root / "sqlite-file-handle"
+        store = SqliteEventStore(root)
+        store.append("run-close", "run.started", {"workflow_id": "test"})
+        self.assertEqual(len(store.read("run-close")), 1)
+
+        database = store.database
+        database.unlink()
+        self.assertFalse(database.exists())
+
     def test_reference_runtime_runs_on_signed_sqlite_store(self) -> None:
         runtime = ReferenceRuntime(
             self.package,
