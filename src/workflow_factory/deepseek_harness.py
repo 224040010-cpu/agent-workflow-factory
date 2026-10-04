@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import hashlib
 import inspect
 import json
+import os
 from pathlib import Path
 import re
 from typing import Any, Callable, Protocol
@@ -159,6 +160,11 @@ class OfficialDeepSeekHarnessClient:
                 "DeepSeek Harness SDK distribution does not expose deepseek_harness"
             ) from exc
 
+        # Pass credentials explicitly to the SDK subprocess. Relying only on
+        # ambient inheritance proved inconsistent across supported launchers.
+        # These values remain in memory and are never added to provenance/events.
+        resolved_api_key = settings.api_key or os.environ.get("DEEPSEEK_API_KEY")
+        resolved_base_url = settings.base_url or os.environ.get("DEEPSEEK_BASE_URL")
         kwargs: dict[str, Any] = {
             "provider": settings.provider,
             "model": settings.model,
@@ -170,8 +176,8 @@ class OfficialDeepSeekHarnessClient:
             "max_tokens": settings.max_tokens,
             "cwd": settings.cwd,
             "dsh_home": settings.dsh_home,
-            "base_url": settings.base_url,
-            "api_key": settings.api_key,
+            "base_url": resolved_base_url,
+            "api_key": resolved_api_key,
         }.items():
             if value is not None:
                 kwargs[key] = str(value) if isinstance(value, Path) else value

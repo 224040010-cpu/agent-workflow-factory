@@ -131,6 +131,8 @@ class HarnessCompositionTest(unittest.TestCase):
                 pass
 
         with patch.dict(sys.modules, {"deepseek_harness": SimpleNamespace(DeepSeekHarness=FakeSdk)}), \
+                patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-memory-only-test",
+                                        "DEEPSEEK_BASE_URL": "https://example.invalid/v1"}), \
                 patch("workflow_factory.deepseek_harness.sdk_environment", return_value={"errors": []}):
             client = OfficialDeepSeekHarnessClient(DeepSeekHarnessSettings(dsh_home=self.home, patches=(PATCH,)))
             self.assertEqual(options["profile"], "sdk-minimal")
@@ -138,6 +140,8 @@ class HarnessCompositionTest(unittest.TestCase):
             self.assertNotIn("cordis", options)
             self.assertNotIn("session_root", options)
             self.assertEqual(options["env"]["DSH_TELEMETRY_MODE"], "DISABLED")
+            self.assertEqual(options["api_key"], "sk-memory-only-test")
+            self.assertEqual(options["base_url"], "https://example.invalid/v1")
             client.run("complete facts", session_id="logical")
             client.run("complete facts", session_id="logical")
             self.assertEqual(calls[0], calls[1])
