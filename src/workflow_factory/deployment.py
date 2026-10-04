@@ -4,7 +4,6 @@ from dataclasses import dataclass
 import importlib.util
 import os
 from pathlib import Path
-import platform
 import re
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
@@ -34,16 +33,19 @@ from .signing import (
     verify_trust_store,
 )
 from .util import read_json
+from .harness_config import sdk_environment, validate_composition
 from .validator import validate_package
 
 
-DEPLOYMENT_SCHEMA_VERSION = "1.0.0"
+DEPLOYMENT_SCHEMA_VERSION = "1.1.0"
 DEPLOYMENT_FIELDS = {
     "$schema",
     "schema_version",
     "deployment_id",
     "runtime_dir",
-    "cordis",
+    "dsh_home",
+    "harness_profile",
+    "patches",
     "artifact_trust",
     "build_signer",
     "runtime_signer",
@@ -132,7 +134,9 @@ class DeploymentConfig:
     schema_version: str
     deployment_id: str
     runtime_dir: Path
-    cordis: Path
+    dsh_home: Path
+    harness_profile: str
+    patches: tuple[Path, ...]
     artifact_trust: ArtifactTrust
     build_signer: SignerReference
     runtime_signer: SignerReference | None
@@ -145,7 +149,9 @@ class DeploymentConfig:
             "schema_version": self.schema_version,
             "deployment_id": self.deployment_id,
             "runtime_dir": str(self.runtime_dir),
-            "cordis": str(self.cordis),
+            "dsh_home": str(self.dsh_home),
+            "harness_profile": self.harness_profile,
+            "patches": [str(path) for path in self.patches],
             "build_signer": self.build_signer.kind,
             "runtime_signer": (
                 self.runtime_signer.kind if self.runtime_signer else None
@@ -249,6 +255,8 @@ def load_deployment(
         raise ValueError(f"Deployment configuration does not exist: {config_path}")
     data = read_json(config_path)
     _reject_inline_secrets(data)
+    if "cordis" in data or data.get("schema_version") == "1.0.0":
+        raise ValueError("Legacy deployment: migrate to schema_version 1.1.0 with dsh_home, harness_profile=sdk-minimal and patches; old Harness sessions require a new run-id")
     _unknown_fields(data, DEPLOYMENT_FIELDS, "deployment")
     if data.get("schema_version") != DEPLOYMENT_SCHEMA_VERSION:
         raise ValueError(
@@ -283,9 +291,13 @@ def load_deployment(
     runtime_dir = _resolve_path(
         base, _required_string(data, "runtime_dir", "deployment")
     )
-    cordis = _resolve_path(base, _required_string(data, "cordis", "deployment"))
-    if not cordis.is_file():
-        raise ValueError(f"Missing deployment cordis: {cordis}")
+    dsh_home = _resolve_path(base, _required_string(data, "dsh_home", "deployment"))
+    harness_profile = _required_string(data, "harness_profile", "deployment")
+    patch_values = data.get("patches")
+    if not isinstance(patch_values, list) or not all(isinstance(p, str) and p.strip() for p in patch_values):
+        raise ValueError("deployment.patches must be an array of paths")
+    patches = tuple(_resolve_path(base, p) for p in patch_values)
+    validate_composition(dsh_home, harness_profile, patches)
     build_signer = _load_signer(
         data.get("build_signer"), base, "deployment.build_signer", required=True
     )
@@ -329,7 +341,9 @@ def load_deployment(
         schema_version=DEPLOYMENT_SCHEMA_VERSION,
         deployment_id=deployment_id,
         runtime_dir=runtime_dir,
-        cordis=cordis,
+        dsh_home=dsh_home,
+        harness_profile=harness_profile,
+        patches=patches,
         artifact_trust=artifact_trust,
         build_signer=build_signer,
         runtime_signer=runtime_signer,
@@ -471,8 +485,9 @@ def check_deployment(
     credential_present = bool(os.environ.get(deployment.api_key_env, "").strip())
     if require_live_environment and not credential_present:
         errors.append(f"Missing credential environment variable: {deployment.api_key_env}")
-    if require_live_environment and platform.system() not in {"Linux", "Darwin"}:
-        errors.append("Official DeepSeek Harness live execution requires Linux or Darwin")
+    sdk_report = sdk_environment() if require_live_environment else None
+    if sdk_report is not None:
+        errors.extend(sdk_report["errors"])
     sdk_present = importlib.util.find_spec("deepseek_harness") is not None
     if require_live_environment and not sdk_present:
         errors.append("deepseek-harness-sdk is not installed")
@@ -507,6 +522,7 @@ def check_deployment(
             "present": runtime_pin_present,
         },
         "official_sdk_present": sdk_present,
+        "sdk_environment": sdk_report,
         "errors": errors,
     }
 
@@ -542,8 +558,9 @@ def run_project(
             model=project.runtime.model,
             max_tokens=deployment.max_tokens,
             cwd=deployment.runtime_dir / "harness-workspace",
-            session_root=deployment.runtime_dir / "harness-sessions",
-            cordis=deployment.cordis,
+            dsh_home=deployment.dsh_home,
+            profile=deployment.harness_profile,
+            patches=deployment.patches,
             base_url=deployment.base_url,
             api_key=os.environ.get(deployment.api_key_env),
         )

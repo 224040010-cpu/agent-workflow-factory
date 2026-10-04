@@ -1,9 +1,11 @@
 {
   "$schema": "../../schemas/workflow-deployment.schema.json",
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "deployment_id": "local-deepseek-dev",
   "runtime_dir": "/home/your-user/.local/share/agent-workflow-factory/readonly-intent-review",
-  "cordis": "../../adapters/deepseek-harness/readonly.cordis.yml",
+  "dsh_home": "/home/your-user/.local/share/agent-workflow-factory/readonly-intent-review/harness-home-v122",
+  "harness_profile": "sdk-minimal",
+  "patches": ["../../adapters/deepseek-harness/readonly.patch.yml"],
   "artifact_trust": {
     "trust_store": "/home/your-user/.config/agent-workflow-factory/trusted-publishers.json",
     "trust_store_signature": "/home/your-user/.config/agent-workflow-factory/trusted-publishers.sig.json",

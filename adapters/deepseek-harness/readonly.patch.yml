@@ -1,0 +1,26 @@
+# 仅适用于已固定的 SDK 0.1.5rc1 / sdk-minimal。
+# Tool 由 Factory 宿主执行，模型仅复核证据。
+- id: persistent-bash
+  disabled: true
+- id: persistent-pwsh
+  disabled: true
+- id: terminal-bash
+  disabled: true
+- id: terminal-pwsh
+  disabled: true
+- id: session-log-deepseek
+  config:
+    enabled: false
+- id: plugin-package-inventory-deepseek
+  config:
+    enabled: false
+- id: sdk-jsonrpc-server
+  config:
+    maxTokensAsSuccess: false
+- id: system-prompt
+  config:
+    includeHarnessIdentity: false
+    includeRuntimeContext: false
+    personaPrefix: >-
+      你是只读工作流证据复核 Agent。不得发起工具调用，不得修改外部状态，
+      必须按照每次输入中的 JSON 输出约束作答。

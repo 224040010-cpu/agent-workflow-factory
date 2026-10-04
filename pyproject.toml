@@ -1,12 +1,12 @@
 [project]
 name = "agent-workflow-factory"
-version = "1.2.1"
+version = "1.2.2"
 description = "Compile business language into governed Agent Graph and BPMN views"
 requires-python = ">=3.11"
 dependencies = ["cryptography>=45,<51"]
 
 [project.optional-dependencies]
-deepseek = ["deepseek-harness-sdk==0.1.1rc1"]
+deepseek = ["deepseek-harness-sdk==0.1.5rc1", "deepseek-harness-runtime-bin==0.1.5rc1"]
 pkcs11 = ["python-pkcs11>=0.9.4,<0.10"]
 
 [tool.unittest]

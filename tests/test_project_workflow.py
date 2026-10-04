@@ -36,6 +36,13 @@ from workflow_factory.util import write_json  # noqa: E402
 
 
 class WorkflowProjectTest(unittest.TestCase):
+    def test_legacy_deployment_has_actionable_migration_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "old-deployment.json"
+            write_json(path, {"schema_version": "1.0.0", "cordis": "old.yml"})
+            with self.assertRaisesRegex(ValueError, "migrate to schema_version 1.1.0"):
+                load_deployment(path)
+
     def _write_project(
         self,
         root: Path,
@@ -211,6 +218,8 @@ class WorkflowProjectTest(unittest.TestCase):
             command,
             cwd=ROOT,
             text=True,
+            encoding="utf-8",
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             capture_output=True,
             check=False,
         )
@@ -305,10 +314,12 @@ class ProjectDeploymentTest(unittest.TestCase):
 
     def _deployment_data(self) -> dict:
         return {
-            "schema_version": "1.0.0",
+            "schema_version": "1.1.0",
             "deployment_id": "local-deepseek-dev",
             "runtime_dir": str(self.runtime),
-            "cordis": str(ROOT / "adapters/deepseek-harness/readonly.cordis.yml"),
+            "dsh_home": str(self.runtime / "harness-home-v122"),
+            "harness_profile": "sdk-minimal",
+            "patches": [str(ROOT / "adapters/deepseek-harness/readonly.patch.yml")],
             "artifact_trust": {
                 "trust_store": str(self.trust_store),
                 "trust_store_signature": str(self.trust_signature),
@@ -393,6 +404,8 @@ class ProjectDeploymentTest(unittest.TestCase):
             ],
             cwd=ROOT,
             text=True,
+            encoding="utf-8",
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             capture_output=True,
             check=False,
         )

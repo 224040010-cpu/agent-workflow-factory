@@ -25,6 +25,7 @@ from workflow_factory.deepseek_harness import (  # noqa: E402
     DeepSeekReadonlyAdapter,
     DeepSeekReadonlyRunner,
     DeepSeekTrustPolicy,
+    OfficialDeepSeekHarnessClient,
     READONLY_CORDIS_DIGEST,
     ReadonlyToolHost,
     binding_digest,
@@ -352,6 +353,32 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
         self.assertEqual(client.calls[0]["session_id"], client.calls[1]["session_id"])
         self.assertEqual(runner.runtime.replay("run-resume")["result"], "PASS")
 
+    def test_resume_rejects_changed_runtime_before_model_or_state_mutation(self) -> None:
+        client = FakeHarnessClient(fail_once=True)
+        client.provenance = {"sdk_version": "old-sdk"}
+        runner = self.runner(DeepSeekReadonlyAdapter(client=client))
+        with self.assertRaisesRegex(RuntimeError, "injected Harness interruption"):
+            runner.run(self.facts, run_id="run-sdk-change")
+        before = runner.runtime.load_state("run-sdk-change")
+        client.provenance = {"sdk_version": "new-sdk"}
+        with self.assertRaisesRegex(ValueError, "provenance changed"):
+            runner.run(self.facts, run_id="run-sdk-change")
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(runner.runtime.load_state("run-sdk-change"), before)
+        self.assertEqual(runner.runtime.replay("run-sdk-change")["result"], "PASS")
+
+    def test_missing_finish_reason_is_not_accepted_as_success(self) -> None:
+        class MissingReason(FakeHarnessClient):
+            def run(self, input, *, session_id=None):
+                result = super().run(input, session_id=session_id)
+                result.finish_reason = None
+                return result
+
+        runner = self.runner(DeepSeekReadonlyAdapter(client=MissingReason()))
+        with self.assertRaisesRegex(RuntimeError, "Harness turn ended"):
+            runner.run(self.facts, run_id="run-no-reason")
+        self.assertEqual(runner.runtime.load_state("run-no-reason")["status"], "paused")
+
     def test_rejects_non_readonly_lockfile_tool_before_model(self) -> None:
         lock = read_json(self.package / "registry.lock.json")
         tool = next(item for item in lock["resolved_assets"] if item["type"] == "tool")
@@ -553,6 +580,43 @@ class DeepSeekReadonlyHarnessTest(unittest.TestCase):
 
 
 class DeepSeekReadonlyMultinodeTest(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get("AWF_SDK_RUNTIME_TEST") == "1", "requires pinned SDK/runtime opt-in")
+    def test_official_runtime_graph_recovers_after_process_restart(self) -> None:
+        from sdk_test_support import local_model_endpoint
+
+        class InterruptSecondNode(OfficialDeepSeekHarnessClient):
+            def run(self, input, *, session_id=None):
+                if json.loads(input)["workflow"]["node_id"] == "check-ambiguity":
+                    raise RuntimeError("injected second-node interruption")
+                return super().run(input, session_id=session_id)
+
+        with local_model_endpoint() as (base_url, requests):
+            settings = DeepSeekHarnessSettings(
+                cwd=self.root / "workspace", dsh_home=self.root / "sdk-home",
+                patches=(ROOT / "adapters/deepseek-harness/readonly.patch.yml",),
+                api_key="sk-local-test-no-real-secret", base_url=base_url,
+            )
+            first = InterruptSecondNode(settings)
+            try:
+                runner = self.runner(DeepSeekReadonlyAdapter(client=first))
+                with self.assertRaisesRegex(RuntimeError, "second-node interruption"):
+                    runner.run(self.facts, run_id="official-recovery")
+                self.assertEqual(runner.runtime.load_state("official-recovery")["completed_nodes"], ["parse-intent"])
+            finally:
+                first.close()
+            second = OfficialDeepSeekHarnessClient(settings)
+            try:
+                resumed = self.runner(DeepSeekReadonlyAdapter(client=second))
+                report = resumed.run(self.facts, run_id="official-recovery")
+                self.assertEqual(report["result"], "PASS")
+                self.assertEqual(report["completed_actions"], 1)
+                self.assertEqual(resumed.runtime.replay("official-recovery")["result"], "PASS")
+                self.assertEqual(resumed.runtime.load_state("official-recovery")["current_node"], "ready")
+            finally:
+                second.close()
+            self.assertEqual(len(requests), 2)
+            self.assertTrue(all(not request.get("tools") for request in requests))
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -653,7 +717,7 @@ class DeepSeekReadonlyMultinodeTest(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    os.environ.get("DSH_LIVE_TEST") == "1" and platform.system() in {"Linux", "Darwin"},
+    os.environ.get("DSH_LIVE_TEST") == "1" and platform.system() in {"Linux", "Darwin", "Windows"},
     "requires DSH_LIVE_TEST=1, credentials, SDK and an official supported platform",
 )
 class DeepSeekReadonlyHarnessLiveTest(unittest.TestCase):
@@ -677,8 +741,8 @@ class DeepSeekReadonlyHarnessLiveTest(unittest.TestCase):
             adapter = DeepSeekReadonlyAdapter(
                 settings=DeepSeekHarnessSettings(
                     cwd=runtime_dir / "workspace",
-                    session_root=runtime_dir / "harness-sessions",
-                    cordis=ROOT / "adapters/deepseek-harness/readonly.cordis.yml",
+                    dsh_home=(runtime_dir / "harness-home-v122").resolve(),
+                    patches=(ROOT / "adapters/deepseek-harness/readonly.patch.yml",),
                 )
             )
             try:
@@ -699,7 +763,7 @@ class DeepSeekReadonlyHarnessLiveTest(unittest.TestCase):
 
 @unittest.skipUnless(
     os.environ.get("DSH_MULTINODE_LIVE_TEST") == "1"
-    and platform.system() in {"Linux", "Darwin"},
+    and platform.system() in {"Linux", "Darwin", "Windows"},
     "requires DSH_MULTINODE_LIVE_TEST=1, credentials, SDK and a supported platform",
 )
 class DeepSeekReadonlyMultinodeLiveTest(unittest.TestCase):
@@ -724,8 +788,8 @@ class DeepSeekReadonlyMultinodeLiveTest(unittest.TestCase):
             adapter = DeepSeekReadonlyAdapter(
                 settings=DeepSeekHarnessSettings(
                     cwd=runtime_dir / "workspace",
-                    session_root=runtime_dir / "harness-sessions",
-                    cordis=ROOT / "adapters/deepseek-harness/readonly.cordis.yml",
+                    dsh_home=(runtime_dir / "harness-home-v122").resolve(),
+                    patches=(ROOT / "adapters/deepseek-harness/readonly.patch.yml",),
                 )
             )
             try:

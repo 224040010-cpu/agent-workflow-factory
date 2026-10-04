@@ -386,9 +386,9 @@ def main() -> int:
     run_command.add_argument("--max-tokens", type=int)
     run_command.add_argument("--base-url")
     run_command.add_argument(
-        "--cordis",
+        "--harness-patch",
         type=Path,
-        default=ROOT / "adapters/deepseek-harness/readonly.cordis.yml",
+        default=ROOT / "adapters/deepseek-harness/readonly.patch.yml",
     )
     run_command.add_argument(
         "--trust-store", type=Path, default=ROOT / "trust/trusted-publishers.json"
@@ -641,8 +641,8 @@ def main() -> int:
                 model=args.model,
                 max_tokens=args.max_tokens,
                 cwd=args.runtime_dir / "harness-workspace",
-                session_root=args.runtime_dir / "harness-sessions",
-                cordis=args.cordis,
+                dsh_home=(args.runtime_dir / "harness-home-v122").resolve(),
+                patches=(args.harness_patch,),
                 base_url=args.base_url,
             )
             adapter = DeepSeekReadonlyAdapter(settings=settings)

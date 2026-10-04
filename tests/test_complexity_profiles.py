@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -111,6 +112,8 @@ class ComplexityProfileTest(unittest.TestCase):
             [sys.executable, str(ROOT / "scripts/workflowctl.py"), "profile-show", "dev"],
             cwd=ROOT,
             text=True,
+            encoding="utf-8",
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             capture_output=True,
             check=False,
         )
@@ -121,6 +124,8 @@ class ComplexityProfileTest(unittest.TestCase):
             [sys.executable, str(ROOT / "scripts/workflowctl.py"), "profile-check"],
             cwd=ROOT,
             text=True,
+            encoding="utf-8",
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             capture_output=True,
             check=False,
         )
@@ -138,6 +143,8 @@ class ComplexityProfileTest(unittest.TestCase):
             ],
             cwd=ROOT,
             text=True,
+            encoding="utf-8",
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             capture_output=True,
             check=False,
         )
@@ -182,6 +189,8 @@ class ComplexityProfileTest(unittest.TestCase):
                 ],
                 cwd=ROOT,
                 text=True,
+                encoding="utf-8",
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
                 capture_output=True,
                 check=False,
             )

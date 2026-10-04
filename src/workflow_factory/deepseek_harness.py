@@ -3,13 +3,12 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 import hashlib
-from importlib.metadata import PackageNotFoundError, version
 import inspect
 import json
 from pathlib import Path
-import platform
 import re
 from typing import Any, Callable, Protocol
+from uuid import uuid4
 
 from .package_integrity import verify_package_manifest
 from .reference_runtime import (
@@ -22,10 +21,13 @@ from .reference_runtime import (
 from .runtime_contracts import RuntimeCapabilities, negotiate
 from .signing import SigningProvider, verify_artifact, verify_trust_store
 from .util import read_json
+from .harness_config import (
+    PINNED_SDK_VERSION, READONLY_PATCH_DIGEST, READONLY_PROFILE,
+    sdk_environment, validate_composition,
+)
 
 
 READONLY_SIDE_EFFECTS = {"none", "read"}
-PINNED_SDK_VERSION = "0.1.1rc1"
 READONLY_CORDIS_DIGEST = (
     "8c1187e946b3308e94cc255997353b63c84346091239e62e3957696efdc5367a"
 )
@@ -90,8 +92,9 @@ class DeepSeekHarnessSettings:
     model: str = "deepseek-v4-flash"
     max_tokens: int | None = None
     cwd: Path | None = None
-    session_root: Path | None = None
-    cordis: Path | None = None
+    dsh_home: Path | None = None
+    profile: str = READONLY_PROFILE
+    patches: tuple[Path, ...] = ()
     base_url: str | None = None
     api_key: str | None = None
 
@@ -132,34 +135,23 @@ class OfficialDeepSeekHarnessClient:
     """Small optional-dependency boundary around the official synchronous SDK."""
 
     def __init__(self, settings: DeepSeekHarnessSettings):
-        if platform.system() not in {"Linux", "Darwin"}:
-            raise RuntimeError(
-                "The official bundled DeepSeek Harness Python runtime supports Linux/macOS, "
-                "not native Windows; run the live adapter in WSL2/Linux"
-            )
-        try:
-            installed_version = version("deepseek-harness-sdk")
-        except PackageNotFoundError as exc:
-            raise RuntimeError(
-                "DeepSeek Harness SDK is not installed; install the pinned optional dependency "
-                "on a supported Linux/macOS host"
-            ) from exc
-        if installed_version != PINNED_SDK_VERSION:
-            raise RuntimeError(
-                f"Unsupported DeepSeek Harness SDK {installed_version}; "
-                f"expected {PINNED_SDK_VERSION}"
-            )
-        if settings.cordis is None or not settings.cordis.is_file():
-            raise RuntimeError("The pinned read-only Cordis composition is required")
-        actual_cordis_digest = hashlib.sha256(settings.cordis.read_bytes()).hexdigest()
-        if actual_cordis_digest != READONLY_CORDIS_DIGEST:
-            raise RuntimeError(
-                "Cordis composition differs from the reviewed read-only configuration"
-            )
+        environment = sdk_environment()
+        if environment["errors"]:
+            raise RuntimeError("SDK preflight failed: " + "; ".join(environment["errors"]))
+        self.provenance = validate_composition(settings.dsh_home, settings.profile, settings.patches)
+        self.provenance.update({
+            "provider": settings.provider,
+            "model": settings.model,
+            "session_recovery": "checkpoint-facts-new-process-session",
+            "home_digest": "sha256:" + hashlib.sha256(
+                str(settings.dsh_home.resolve()).encode("utf-8")
+            ).hexdigest(),
+        })
+        self.settings = settings
+        self._sessions: dict[str, str] = {}
         if settings.cwd is not None:
             settings.cwd.mkdir(parents=True, exist_ok=True)
-        if settings.session_root is not None:
-            settings.session_root.mkdir(parents=True, exist_ok=True)
+        settings.dsh_home.mkdir(parents=True, exist_ok=True)
         try:
             from deepseek_harness import DeepSeekHarness
         except ImportError as exc:
@@ -170,12 +162,14 @@ class OfficialDeepSeekHarnessClient:
         kwargs: dict[str, Any] = {
             "provider": settings.provider,
             "model": settings.model,
+            "profile": settings.profile,
+            "patches": tuple(str(path.resolve()) for path in settings.patches),
+            "env": {"DSH_TELEMETRY_MODE": "DISABLED"},
         }
         for key, value in {
             "max_tokens": settings.max_tokens,
             "cwd": settings.cwd,
-            "session_root": settings.session_root,
-            "cordis": settings.cordis,
+            "dsh_home": settings.dsh_home,
             "base_url": settings.base_url,
             "api_key": settings.api_key,
         }.items():
@@ -184,10 +178,21 @@ class OfficialDeepSeekHarnessClient:
         self._harness = DeepSeekHarness(**kwargs)
 
     def run(self, input: str, *, session_id: str | None = None) -> Any:
-        return self._harness.run(input, session_id=session_id)
+        validate_composition(self.settings.dsh_home, self.settings.profile, self.settings.patches)
+        # SDK 0.1.5rc1 can continue only in-process agents. It exposes no
+        # session/load method; recreating a persisted id raises "already exists".
+        # Factory owns durable facts/checkpoints and sends a complete prompt on
+        # each attempt. Never delete logs or pretend the old conversation loaded.
+        actual_id = None
+        if session_id is not None:
+            if session_id not in self._sessions:
+                self._sessions[session_id] = f"{session_id}--{uuid4().hex}"
+            actual_id = self._sessions[session_id]
+        return self._harness.run(input, session_id=actual_id)
 
     def close(self) -> None:
         self._harness.close()
+        self._sessions.clear()
 
 
 def _json_type_matches(value: Any, expected: str) -> bool:
@@ -557,7 +562,9 @@ def harness_usage(events: list[Any]) -> HarnessUsage:
             continue
         key = (data.get("turn", 0), data.get("step", index))
         if event.get("type") == "assistant/message":
-            usage = _token_usage(data.get("usage"))
+            message = data.get("message")
+            raw_usage = message.get("usage") if isinstance(message, dict) else None
+            usage = _token_usage(raw_usage if raw_usage is not None else data.get("usage"))
             if usage is not None:
                 message_usage[key] = usage
         elif event.get("type") == "assistant/chunk":
@@ -721,7 +728,7 @@ class DeepSeekReadonlyAdapter:
         events = events if isinstance(events, list) else []
         usage = harness_usage(events)
         finish_reason = getattr(result, "finish_reason", None)
-        if finish_reason not in {None, "completed"}:
+        if finish_reason != "completed":
             raise RuntimeError(_harness_failure(events, finish_reason))
         if not final_response.strip():
             raise RuntimeError(_harness_failure(events, finish_reason))
@@ -885,10 +892,19 @@ class DeepSeekReadonlyRunner:
         self._verify_capabilities()
         if self.runtime.integrity.require_signatures:
             self.runtime.integrity.require_write_signer()
+        client = self.adapter.client
+        provenance = getattr(client, "provenance", {"execution": "injected-client"})
         run_id = run_id or "run-deepseek-readonly"
         checkpoint = self.runtime.checkpoint_path(run_id)
         if checkpoint.exists():
             state = self.runtime.load_state(run_id)
+            accepted = [event for event in self.runtime.events.read(run_id)
+                        if event["type"] == "adapter.capabilities.accepted"]
+            if not accepted or accepted[0]["payload"].get("runtime") != provenance:
+                raise ValueError(
+                    "Harness runtime provenance changed or is missing; "
+                    "keep the old environment for replay and use a new run-id for migration"
+                )
             if state["status"] == "paused":
                 state = self.runtime.resume(run_id)
         else:
@@ -896,7 +912,7 @@ class DeepSeekReadonlyRunner:
             self.runtime.events.append(
                 run_id,
                 "adapter.capabilities.accepted",
-                {"adapter": "deepseek-harness", "mode": "readonly"},
+                {"adapter": "deepseek-harness", "mode": "readonly", "runtime": provenance},
             )
             self.runtime.events.append(
                 run_id,
@@ -1006,6 +1022,7 @@ class DeepSeekReadonlyRunner:
                     {
                         "node_id": route["node_id"],
                         "session_id": result.session_id,
+                        "logical_session_id": f"{run_id}--{route['node_id']}",
                         "finish_reason": result.finish_reason,
                         "response_digest": result.response_digest,
                         "harness_event_types": result.harness_event_types,

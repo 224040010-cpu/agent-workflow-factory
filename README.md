@@ -15,7 +15,9 @@ Agent Workflow Factory 是一个把业务人员的流程描述转换为可评审
   → 事件轨迹、检查点与审计重放
 ```
 
-当前版本：`1.2.1`
+当前代码版本：`1.2.2`（SDK 兼容迁移；目标环境真实模型验收待完成）
+
+本轮将 DeepSeek Harness SDK / Runtime 固定到 `0.1.5rc1`，支持原生 Windows x64，改用隔离 Home 与只读 `sdk-minimal` Patch。旧部署配置需要显式迁移，不能直接复用旧运行 ID。[升级与验收指南](docs/v1.2.2-sdk-migration.md)包含 Windows / WSL 操作步骤和会话恢复限制。
 
 ## 项目解决什么问题
 
@@ -126,6 +128,8 @@ Skill 和 Tool 的权威定义、批准、限制和退役由独立的 `skill-reg
 - 独立 `workflow.deployment.json` 部署边界；
 - `deploy-check / run-project` 真实部署入口。
 
+v1.2.2 已增加 SDK/Runtime 双版本预检、Patch 摘要校验、运行来源记录和跨版本恢复拒绝；Windows 上已验证官方运行时配合本地假模型的多节点执行、中断恢复和签名重放。这不等于新版真实 DeepSeek API 或真实 HSM 验收。
+
 2026 年 8 月 31 日已经在 WSL2 Ubuntu 24.04 参考环境完成真实 DeepSeek、SoftHSM PKCS#11、HSM 签名运行、无私钥重放、防篡改和全量回归验收。该结果证明参考技术链路可用，但不能替代目标机构的真实 HSM 认证、组织安全评审和生产验收。
 
 ### 尚未完成
@@ -142,9 +146,11 @@ Skill 和 Tool 的权威定义、批准、限制和退役由独立的 `skill-reg
 
 ## 后续开发计划
 
-### v1.3：业务评审台
+### v1.3：Desktop Review Bridge 与业务评审入口
 
-目标是让不懂 CLI 的业务人员在浏览器中完成一次流程创建和评审。
+按复杂度收敛，先实现 `desktop-export`：把 BPMN、SVG、Agent/Tool 摘要、READY/BLOCKED 和运行材料打包为可校验的评审工作区，再接入 Desktop Review Plugin。Desktop 只是可选展示客户端，不接管生产运行状态、SDK Home 或信任库。本轮 v1.2.2 尚未交付 Desktop 插件。
+
+浏览器业务评审台保留为后续扩展，目标是让不懂 CLI 的业务人员完成一次流程创建和评审，不与 SDK 破坏性迁移同时引入。
 
 计划交付：
 
@@ -206,7 +212,7 @@ Skill 和 Tool 的权威定义、批准、限制和退役由独立的 `skill-reg
 - Python 3.11 或更高版本；
 - Git；
 - 基础离线编译需要 `cryptography`；
-- 真实 DeepSeek Harness 运行建议使用 WSL2 Ubuntu、Linux 或 macOS；
+- 真实 DeepSeek Harness 支持 Windows x64、Linux x64/arm64（含适配的 WSL 环境）和 macOS 14+ arm64；
 - PKCS#11 HSM 测试需要 SoftHSM 或厂商 PKCS#11 Module。
 
 ### 1. 下载并安装
@@ -319,7 +325,7 @@ python scripts/workflowctl.py test-run \
 
 参考模板：[`examples/readonly-intent-review/workflow.deployment.example.json`](examples/readonly-intent-review/workflow.deployment.example.json)
 
-不要直接使用模板中的占位路径。复制模板后，把运行目录、Cordis、信任库、Tool Binding 和签名器路径全部修改为当前机器上的真实绝对路径。不要把 API Key、HSM PIN 或私钥内容写入 JSON。
+不要直接使用模板中的占位路径。复制模板后，把运行目录、隔离 `dsh_home`、`patches`、信任库、Tool Binding 和签名器路径全部修改为当前机器上的真实绝对路径。`harness_profile` 固定为 `sdk-minimal`；部署 Schema 为 `1.1.0`。不要复用个人/Desktop 的 Home，也不要把 API Key、HSM PIN 或私钥内容写入 JSON。
 
 ### 1. 注入凭据
 
@@ -429,6 +435,8 @@ python scripts/run_deepseek_multinode_mvp.py
 - [v1.1 技术基线验收](docs/v1.1-acceptance.md)
 - [v1.2 项目入口](docs/v1.2-project-entry.md)
 - [v1.2.1 部署入口](docs/v1.2.1-deployment-entry.md)
+- [v1.2.2 SDK 升级、会话恢复与验收](docs/v1.2.2-sdk-migration.md)
+- [DeepSeek Harness Desktop 与新版 SDK 升级方案](docs/deepseek-harness-desktop-upgrade-plan.md)
 - [DeepSeek 只读 MVP](docs/deepseek-readonly-mvp.md)
 - [DeepSeek 多节点工作流](docs/deepseek-readonly-multinode.md)
 - [DeepSeek v0.7 Tool Binding 与预算](docs/deepseek-readonly-v0.7.md)

@@ -6,6 +6,27 @@ on:
     branches: [main]
 
 jobs:
+  sdk-contract:
+    name: Pinned SDK contract (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      AWF_SDK_RUNTIME_TEST: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned SDK and native runtime
+        run: python -m pip install -e ".[deepseek]"
+      - name: Verify resolved composition and local model contract
+        run: python -m unittest discover -s tests -p test_harness_sdk_contract.py -v
+      - name: Verify signed graph execution and cross-process recovery
+        run: python -m unittest discover -s tests -p test_deepseek_harness.py -v
   validate:
     runs-on: ubuntu-latest
     steps:

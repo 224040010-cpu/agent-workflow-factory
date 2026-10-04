@@ -5,10 +5,13 @@
   "compatibility": {
     "policy": "explicitly-pinned-developer-preview-version",
     "breaking_changes_expected": true,
-    "target_release": "v0.1.1-rc.1",
-    "python_package": "deepseek-harness-sdk==0.1.1rc1",
+    "target_release": "dsh-v0.1.5-rc.1",
+    "python_package": "deepseek-harness-sdk==0.1.5rc1",
+    "runtime_package": "deepseek-harness-runtime-bin==0.1.5rc1",
     "sdk_call_contract": "DeepSeekHarness.run(input, session_id=...)",
-    "readonly_cordis_sha256": "8c1187e946b3308e94cc255997353b63c84346091239e62e3957696efdc5367a"
+    "profile": "sdk-minimal",
+    "readonly_patch_sha256": "4c3c4a207cab4ac1dea8bd625500ed763a556dae9446be0fa559719209f2427b",
+    "session_recovery": "checkpoint-facts-new-process-session"
   },
   "maps": {
     "agent_profile": "agent-provider-and-preset",
